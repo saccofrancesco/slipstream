@@ -97,3 +97,16 @@ def message_field(field_number: int, value: bytes) -> bytes:
     # Reuse the bytes-field encoder because messages use wire type 2
     # (length-delimited).
     return bytes_field(field_number, value)
+
+def airport(code: str) -> bytes:
+    """
+    Encode an airport as a protobuf message
+    """
+    # Field 1 marks this as an exact airport rather than a broader location.
+    exact_airport_marker: bytes = varint_field(1, 1)
+
+    # Field 2 stores the airport's IATA code, such as "MXP".
+    iata_code: bytes = string_field(2, code)
+
+    # Combine both encoded fields into the airport message.
+    return exact_airport_marker + iata_code
