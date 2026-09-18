@@ -88,3 +88,12 @@ def string_field(field_number: int, value: str) -> bytes:
     # Convert the Python string to UTF-8, then reuse the bytes-field encoder.
     encoded_value: bytes = value.encode("utf-8")
     return bytes_field(field_number, encoded_value)
+
+def message_field(field_number: int, value: bytes) -> bytes:
+    """
+    Encode a nested protobuf message field
+    """
+    # A nested message is serialized as bytes.
+    # Reuse the bytes-field encoder because messages use wire type 2
+    # (length-delimited).
+    return bytes_field(field_number, value)
