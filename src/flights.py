@@ -1,5 +1,3 @@
-"""Google Flights search models, validation, encoding, and URL generation"""
-
 # Importing libraries
 from __future__ import annotations
 import base64
@@ -28,9 +26,7 @@ MAX_UINT64: int = (1 << 64) - 1
 
 @dataclass(frozen=True)  # Makes instances immutable after creation
 class LegFilters:
-    """
-    Optional Google Flights filters that apply to one flight leg
-    """
+    """Optional Google Flights filters that apply to one flight leg"""
 
     max_stops: int | None = (
         None  # Maximum allowed stops: 0 = nonstop, 1 = one stop or fewer, etc
@@ -61,9 +57,7 @@ class LegFilters:
 
 @dataclass(frozen=True)  # Makes instances immutable after creation
 class FlightSearch:
-    """
-    Fields needed for a one-way or round-trip Google Flights search
-    """
+    """Fields needed for a one-way or round-trip Google Flights search"""
 
     origin: str  # Departure airport code, e.g. "MXP"
     destination: str  # Arrival airport code, e.g. "ACE"
@@ -90,9 +84,7 @@ class FlightSearch:
 
 
 def varint(value: int) -> bytes:
-    """
-    Encode an unsigned integer using protobuf's base-128 varint format
-    """
+    """Encode an unsigned integer using protobuf's base-128 varint format"""
     # Accept only values that fit in an unsigned 64-bit integer
     if not 0 <= value <= MAX_UINT64:
         raise ValueError("protobuf varint must be an unsigned 64-bit integer")
@@ -114,9 +106,7 @@ def varint(value: int) -> bytes:
 
 
 def varint_field(field_number: int, value: int) -> bytes:
-    """
-    Encode a protobuf field whose value uses the varint wire type
-    """
+    """Encode a protobuf field whose value uses the varint wire type"""
     # Protobuf encodes the field number and wire type together
     # Wire type 0 represents a varint, so shifting by 3 is sufficient
     field_key: int = field_number << 3
@@ -126,9 +116,7 @@ def varint_field(field_number: int, value: int) -> bytes:
 
 
 def bytes_field(field_number: int, value: bytes) -> bytes:
-    """
-    Encode a protobuf length-delimited bytes field
-    """
+    """Encode a protobuf length-delimited bytes field"""
     # Wire type 2 means the field contains length-delimited data
     field_key: int = (field_number << 3) | 2
 
@@ -137,9 +125,7 @@ def bytes_field(field_number: int, value: bytes) -> bytes:
 
 
 def string_field(field_number: int, value: str) -> bytes:
-    """
-    Encode a protobuf string field as UTF-8 bytes
-    """
+    """Encode a protobuf string field as UTF-8 bytes"""
     # Protobuf strings are length-delimited fields
     # Convert the Python string to UTF-8, then reuse the bytes-field encoder
     encoded_value: bytes = value.encode("utf-8")
@@ -147,9 +133,7 @@ def string_field(field_number: int, value: str) -> bytes:
 
 
 def message_field(field_number: int, value: bytes) -> bytes:
-    """
-    Encode a nested protobuf message field
-    """
+    """Encode a nested protobuf message field"""
     # A nested message is serialized as bytes
     # Reuse the bytes-field encoder because messages use wire type 2
     # (length-delimited)
@@ -157,9 +141,7 @@ def message_field(field_number: int, value: bytes) -> bytes:
 
 
 def airport(code: str) -> bytes:
-    """
-    Encode an airport as a protobuf message
-    """
+    """Encode an airport as a protobuf message"""
     # Field 1 marks this as an exact airport rather than a broader location
     exact_airport_marker: bytes = varint_field(1, 1)
 
@@ -171,14 +153,9 @@ def airport(code: str) -> bytes:
 
 
 def flight_leg(
-    day: date,
-    origin: str,
-    destination: str,
-    filters: LegFilters | None = None,
+    day: date, origin: str, destination: str, filters: LegFilters | None = None
 ) -> bytes:
-    """
-    Encode one flight leg as a protobuf message
-    """
+    """Encode one flight leg as a protobuf message"""
     # Field 2 stores the travel date in ISO-8601 format, e.g. "2026-09-18"
     encoded: bytearray = bytearray(string_field(2, day.isoformat()))
 
@@ -227,9 +204,7 @@ def flight_leg(
 
 
 def airport_code(value: str, name: str) -> str:
-    """
-    Validate and normalize a three-letter IATA airport code
-    """
+    """Validate and normalize a three-letter IATA airport code"""
     # Reject values that are not strings
     if not isinstance(value, str):
         raise ValueError(f"{name} must be a three-letter IATA airport code")
@@ -245,9 +220,7 @@ def airport_code(value: str, name: str) -> str:
 
 
 def airline_code(value: str, name: str) -> str:
-    """
-    Validate and normalize a two-character airline designator
-    """
+    """Validate and normalize a two-character airline designator"""
     # Ensure the input is a string
     if not isinstance(value, str):
         raise ValueError(f"{name} must be a two-character airline code")
@@ -264,9 +237,7 @@ def airline_code(value: str, name: str) -> str:
 
 
 def nonnegative_int(value: object, name: str) -> int:
-    """
-    Validate a non-negative integer while rejecting booleans
-    """
+    """Validate a non-negative integer while rejecting booleans"""
     # Reject booleans because bool is a subclass of int in Python
     # Also reject non-integers and negative values
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
@@ -277,13 +248,9 @@ def nonnegative_int(value: object, name: str) -> int:
 
 
 def normalize_codes(
-    values: tuple[str, ...] | list[str],
-    name: str,
-    validator: object,
+    values: tuple[str, ...] | list[str], name: str, validator: object
 ) -> tuple[str, ...]:
-    """
-    Validate, normalize, and return airport or airline codes as a tuple
-    """
+    """Validate, normalize, and return airport or airline codes as a tuple"""
     # Reject a single string because the function expects a collection of codes
     # Otherwise, iterating over a string would process it character by character
     if isinstance(values, str):
@@ -301,13 +268,8 @@ def normalize_codes(
     return tuple(normalized)
 
 
-def normalize_leg_filters(
-    filters: LegFilters,
-    name: str = "leg_filters",
-) -> LegFilters:
-    """
-    Validate and normalize a leg's filter values before encoding
-    """
+def normalize_leg_filters(filters: LegFilters, name: str = "leg_filters") -> LegFilters:
+    """Validate and normalize a leg's filter values before encoding"""
     # Read the maximum-stops filter
     max_stops: int | None = filters.max_stops
 
@@ -409,9 +371,7 @@ def normalize_leg_filters(
 
 
 def parse_date(value: str | date, name: str) -> date:
-    """
-    Parse a value as a strict YYYY-MM-DD date
-    """
+    """Parse a value as a strict YYYY-MM-DD date"""
     # datetime is a subclass of date, so reject it explicitly first
     if isinstance(value, datetime):
         raise ValueError(f"{name} must be a date, not a datetime")
@@ -437,9 +397,7 @@ def parse_date(value: str | date, name: str) -> date:
 
 
 def encode_tfs(search: FlightSearch) -> str:
-    """
-    Encode a FlightSearch as Google Flights' URL-safe ``tfs`` value
-    """
+    """Encode a FlightSearch as Google Flights' URL-safe ``tfs`` value"""
     # Normalize and validate the departure and arrival airport codes
     origin: str = airport_code(search.origin, "origin")
     destination: str = airport_code(search.destination, "destination")
