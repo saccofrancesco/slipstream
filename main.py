@@ -141,3 +141,31 @@ def airport_code(value: str, name: str) -> str:
         raise ValueError(f"{name} must be a three-letter IATA airport code")
 
     return code
+
+def parse_date(value: str | date, name: str) -> date:
+    """
+    Parse a value as a strict YYYY-MM-DD date
+    """
+
+    # datetime is a subclass of date, so reject it explicitly first
+    if isinstance(value, datetime):
+        raise ValueError(f"{name} must be a date, not a datetime")
+
+    # Date objects can be returned directly
+    if isinstance(value, date):
+        return value
+
+    # All other values must be strings
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must use YYYY-MM-DD format")
+    try:
+        # Parse the string using ISO-8601 date syntax
+        parsed = date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must use YYYY-MM-DD format") from exc
+
+    # Ensure the input used the exact canonical YYYY-MM-DD representation
+    if parsed.isoformat() != value:
+        raise ValueError(f"{name} must use YYYY-MM-DD format")
+
+    return parsed
