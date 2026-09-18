@@ -60,3 +60,14 @@ def varint(value: int) -> bytes:
 
     # Convert the mutable bytearray to immutable bytes.
     return bytes(encoded)
+
+def varint_field(field_number: int, value: int) -> bytes:
+    """
+    Encode a protobuf field whose value uses the varint wire type
+    """
+    # Protobuf encodes the field number and wire type together.
+    # Wire type 0 represents a varint, so shifting by 3 is sufficient.
+    field_key = field_number << 3
+
+    # Encode the field key, followed by the actual integer value.
+    return varint(field_key) + varint(value)
