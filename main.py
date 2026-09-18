@@ -1,13 +1,12 @@
-"""Command-line entry point for the Google Flights link generator"""
-
+# Importing libraries
 from src.cli import collect_flight_search
-from src.flights import build_google_flights_url
+from src.flights import FlightSearch, build_google_flights_url
 
 
 def main() -> None:
     """Collect a search and print its generated Google Flights URL"""
     # Gather the user's search criteria and create a FlightSearch instance
-    search = collect_flight_search()
+    search: FlightSearch = collect_flight_search()
 
     # Encode the search and generate the final link for manual testing
     link: str = build_google_flights_url(search)
