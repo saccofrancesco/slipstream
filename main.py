@@ -110,3 +110,17 @@ def airport(code: str) -> bytes:
 
     # Combine both encoded fields into the airport message.
     return exact_airport_marker + iata_code
+
+def flight_leg(day: date, origin: str, destination: str) -> bytes:
+    """
+    Encode one flight leg as a protobuf message
+    """
+    # Field 2 stores the travel date in ISO-8601 format, e.g. "2026-09-18".
+    travel_date: bytes = string_field(2, day.isoformat())
+
+    # Fields 13 and 14 store the origin and destination airport messages.
+    origin_airport: bytes = message_field(13, airport(origin))
+    destination_airport: bytes = message_field(14, airport(destination))
+
+    # Combine the date, origin, and destination fields.
+    return travel_date + origin_airport + destination_airport
