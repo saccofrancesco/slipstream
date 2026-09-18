@@ -7,7 +7,7 @@ from datetime import date, datetime
 from urllib.parse import urlencode
 
 # URL hardcoded default constants
-GOOGLE_FLIGHT_SEARCH_URL: str = "https://www.google.com/travel/flights/search"
+GOOGLE_FLIGHTS_SEARCH_URL: str = "https://www.google.com/travel/flights/search"
 DEFAULT_TFU: str = "EgYIABAAGAA"
 CABIN_VALUES: dict[str, int] = {
     "economy": 1,
@@ -265,3 +265,29 @@ def encode_tfs(search: FlightSearch) -> str:
     # Encode the protobuf bytes using URL-safe Base64
     # Google Flights' token omits trailing Base64 padding characters
     return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+def build_google_flights_url(search: FlightSearch, *, language: str | None = None, currency: str | None = None, tfu: str | None = DEFAULT_TFU) -> str:
+    """
+    Return a scrapable Google Flights search URL for ``search``
+    ``tfu`` defaults to the companion value in the supplied example. Set it to
+    ``None`` to omit it. Language (``hl``) and display currency (``curr``) are
+    optional URL parameters
+    """
+
+    # Encode the flight search as the required Google Flights ``tfs`` parameter
+    params: list[tuple[str, str]] = [("tfs", encode_tfs(search))]
+
+    # Include the optional ``tfu`` parameter unless explicitly omitted
+    if tfu is not None:
+        params.append(("tfu", tfu))
+
+    # Add the optional interface language parameter
+    if language:
+        params.append(("hl", language))
+
+    # Add the optional display-currency parameter in uppercase form
+    if currency:
+        params.append(("curr", currency.upper()))
+
+    # URL-encode all parameters and append them to the Google Flights URL
+    return f"{GOOGLE_FLIGHTS_SEARCH_URL}?{urlencode(params)}"
