@@ -1,7 +1,6 @@
-"""Interactive collection of Google Flights search parameters"""
+# Importing libraries
 
 from __future__ import annotations
-
 from .flights import (
     CABIN_VALUES,
     FlightSearch,
