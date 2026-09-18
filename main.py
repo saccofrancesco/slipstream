@@ -306,3 +306,131 @@ def build_google_flights_url(
 
     # URL-encode all parameters and append them to the Google Flights URL
     return f"{GOOGLE_FLIGHTS_SEARCH_URL}?{urlencode(params)}"
+
+
+def prompt_airport(label: str) -> str:
+    """
+    Read and validate an IATA airport code
+    """
+    while True:
+        # Keep asking until the user enters a valid three-letter airport code
+        value: str = input(f"{label} airport (IATA code): ").strip()
+        try:
+            return airport_code(value, label.lower())
+        except ValueError as exc:
+            print(f"Invalid airport: {exc}")
+
+
+def prompt_date_value(label: str, *, optional: bool = False) -> str | None:
+    """
+    Read a date in strict YYYY-MM-DD format
+    """
+    while True:
+        # An empty return date means that the search is one-way
+        optional_hint: str = ", leave blank for one-way" if optional else ""
+        value: str = input(f"{label} (YYYY-MM-DD{optional_hint}): ").strip()
+        if optional and not value:
+            return None
+        try:
+            return parse_date(value, label.lower()).isoformat()
+        except ValueError as exc:
+            print(f"Invalid date: {exc}")
+
+
+def prompt_nonnegative_int(label: str, default: int, *, minimum: int = 0) -> int:
+    """
+    Read a passenger count with a default and lower bound
+    """
+    while True:
+        # Passenger fields use sensible defaults so the first test is quick
+        value: str = input(f"{label} [{default}]: ").strip()
+        if not value:
+            return default
+        try:
+            count: int = int(value)
+        except ValueError:
+            print("Please enter a whole number.")
+            continue
+        if count < minimum:
+            print(f"Please enter a number greater than or equal to {minimum}.")
+            continue
+        return count
+
+
+def prompt_cabin() -> str:
+    """
+    Read one of the cabin names supported by the encoder
+    """
+    # Use the same cabin names as the existing protobuf encoder
+    choices: str = ", ".join(CABIN_VALUES)
+    while True:
+        value: str = input(f"Cabin ({choices}) [economy]: ").strip()
+        cabin: str = value or "economy"
+        cabin: str = cabin.lower().replace(" ", "-").replace("_", "-")
+        if cabin in CABIN_VALUES:
+            return cabin
+        print(f"Please choose one of: {choices}.")
+
+
+def collect_flight_search() -> FlightSearch:
+    """
+    Collect the fields needed to create a FlightSearch from the terminal
+    """
+    # Collect and normalize the route before asking for the remaining fields
+    origin: str = prompt_airport("Origin")
+    while True:
+        destination: str = prompt_airport("Destination")
+        if destination != origin:
+            break
+        print("Origin and destination must be different airports.")
+
+    # The departure date is required; the return date is optional
+    departure_value: str | None = prompt_date_value("Departure date")
+    assert departure_value is not None
+    departure_date: str = departure_value
+    while True:
+        return_date: str | None = prompt_date_value("Return date", optional=True)
+        if return_date is None or return_date >= departure_date:
+            break
+        print("Return date cannot be before departure date.")
+    cabin: str = prompt_cabin()
+    while True:
+        # Build the immutable search object from all collected user input
+        search: FlightSearch = FlightSearch(
+            origin=origin,
+            destination=destination,
+            departure_date=departure_date,
+            return_date=return_date,
+            cabin=cabin,
+            adults=prompt_nonnegative_int("Adults", 1, minimum=1),
+            children=prompt_nonnegative_int("Children", 0),
+            infants_in_seat=prompt_nonnegative_int("Infants in own seat", 0),
+            infants_on_lap=prompt_nonnegative_int("Infants on lap", 0),
+        )
+        try:
+            # Validate the complete combination, including passenger limits
+            encode_tfs(search)
+        except ValueError as exc:
+            # Ask for the passenger counts again if the combination is invalid
+            print(f"Invalid passenger setup: {exc}")
+            continue
+        return search
+
+
+def main() -> None:
+    """
+    Collect a search and print its generated Google Flights URL
+    """
+    # Gather the user's search criteria and create a FlightSearch instance
+    search: FlightSearch = collect_flight_search()
+
+    # Encode the search and generate the final link for manual testing
+    link: str = build_google_flights_url(search)
+
+    # Print the URL so the user can compare the result
+    print("\nGenerated Google Flights link:")
+    print(link)
+
+
+if __name__ == "__main__":
+    main()
