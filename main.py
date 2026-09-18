@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from urllib.parse import urlencode
 
-# URL hardocoded default constants
+# URL hardcoded default constants
 GOOGLE_FLIGHT_SEARCH_URL: str = "https://www.google.com/travel/flights/search"
 DEFAULT_TFU: str = "EgYIABAAGAA"
 CABIN_VALUES: dict[str, int] = {
@@ -37,3 +37,26 @@ class FlightSearch:
     children: int = 0  # Number of child passengers.
     infants_in_seat: int = 0  # Infants occupying their own seat.
     infants_on_lap: int = 0  # Infants traveling on an adult's lap.
+
+def varint(value: int) -> bytes:
+    """
+    Encode an unsigned integer using protobuf's base-128 varint format
+    """
+    # Accept only values that fit in an unsigned 64-bit integer.
+    if not 0 <= value <= MAX_UINT64:
+        raise ValueError("protobuf varint must be an unsigned 64-bit integer")
+    encoded: bytearray = bytearray()
+
+    # Each byte stores 7 bits of the value.
+    # The high bit indicates that more bytes follow.
+    while value > 0x7F:
+        encoded.append((value & 0x7F) | 0x80)
+
+        # Move to the next group of 7 bits.
+        value >>= 7
+
+    # Store the final 7 bits with the continuation bit cleared.
+    encoded.append(value)
+
+    # Convert the mutable bytearray to immutable bytes.
+    return bytes(encoded)
