@@ -124,3 +124,20 @@ def flight_leg(day: date, origin: str, destination: str) -> bytes:
 
     # Combine the date, origin, and destination fields.
     return travel_date + origin_airport + destination_airport
+
+def airport_code(value: str, name: str) -> str:
+    """
+    Validate and normalize a three-letter IATA airport code
+    """
+    # Reject values that are not strings.
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a three-letter IATA airport code")
+
+    # Remove surrounding whitespace and normalize to uppercase.
+    code: str = value.strip().upper()
+
+    # Ensure the code contains exactly three uppercase letters.
+    if not re.fullmatch(r"[A-Z]{3}", code):
+        raise ValueError(f"{name} must be a three-letter IATA airport code")
+
+    return code
