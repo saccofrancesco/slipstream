@@ -81,3 +81,10 @@ def bytes_field(field_number: int, value: bytes) -> bytes:
 
     # Protobuf stores: field key, payload length, then payload bytes.
     return varint(field_key) + varint(len(value)) + value
+
+def string_field(field_number: int, value: str) -> bytes:
+    """Encode a protobuf string field as UTF-8 bytes."""
+    # Protobuf strings are length-delimited fields.
+    # Convert the Python string to UTF-8, then reuse the bytes-field encoder.
+    encoded_value: bytes = value.encode("utf-8")
+    return bytes_field(field_number, encoded_value)
