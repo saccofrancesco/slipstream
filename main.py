@@ -23,11 +23,13 @@ PASSENGER_VALUES: dict[str, int] = {
 }
 MAX_UINT64: int = (1 << 64) - 1
 
-@dataclass(frozen=True) # Makes instances immutable after creation
+
+@dataclass(frozen=True)  # Makes instances immutable after creation
 class FlightSearch:
     """
     Fields needed for a one-way or round-trip Google Flights search
     """
+
     origin: str  # Departure airport code, e.g. "MXP"
     destination: str  # Arrival airport code, e.g. "ACE"
     departure_date: str | date  # Departure date as text or a date object
@@ -37,6 +39,7 @@ class FlightSearch:
     children: int = 0  # Number of child passengers
     infants_in_seat: int = 0  # Infants occupying their own seat
     infants_on_lap: int = 0  # Infants traveling on an adult's lap
+
 
 def varint(value: int) -> bytes:
     """
@@ -61,6 +64,7 @@ def varint(value: int) -> bytes:
     # Convert the mutable bytearray to immutable bytes
     return bytes(encoded)
 
+
 def varint_field(field_number: int, value: int) -> bytes:
     """
     Encode a protobuf field whose value uses the varint wire type
@@ -72,6 +76,7 @@ def varint_field(field_number: int, value: int) -> bytes:
     # Encode the field key, followed by the actual integer value
     return varint(field_key) + varint(value)
 
+
 def bytes_field(field_number: int, value: bytes) -> bytes:
     """
     Encode a protobuf length-delimited bytes field
@@ -82,12 +87,14 @@ def bytes_field(field_number: int, value: bytes) -> bytes:
     # Protobuf stores: field key, payload length, then payload bytes
     return varint(field_key) + varint(len(value)) + value
 
+
 def string_field(field_number: int, value: str) -> bytes:
     """Encode a protobuf string field as UTF-8 bytes"""
     # Protobuf strings are length-delimited fields
     # Convert the Python string to UTF-8, then reuse the bytes-field encoder
     encoded_value: bytes = value.encode("utf-8")
     return bytes_field(field_number, encoded_value)
+
 
 def message_field(field_number: int, value: bytes) -> bytes:
     """
@@ -97,6 +104,7 @@ def message_field(field_number: int, value: bytes) -> bytes:
     # Reuse the bytes-field encoder because messages use wire type 2
     # (length-delimited)
     return bytes_field(field_number, value)
+
 
 def airport(code: str) -> bytes:
     """
@@ -111,6 +119,7 @@ def airport(code: str) -> bytes:
     # Combine both encoded fields into the airport message
     return exact_airport_marker + iata_code
 
+
 def flight_leg(day: date, origin: str, destination: str) -> bytes:
     """
     Encode one flight leg as a protobuf message
@@ -124,6 +133,7 @@ def flight_leg(day: date, origin: str, destination: str) -> bytes:
 
     # Combine the date, origin, and destination fields
     return travel_date + origin_airport + destination_airport
+
 
 def airport_code(value: str, name: str) -> str:
     """
@@ -141,6 +151,7 @@ def airport_code(value: str, name: str) -> str:
         raise ValueError(f"{name} must be a three-letter IATA airport code")
 
     return code
+
 
 def parse_date(value: str | date, name: str) -> date:
     """
@@ -169,6 +180,7 @@ def parse_date(value: str | date, name: str) -> date:
         raise ValueError(f"{name} must use YYYY-MM-DD format")
 
     return parsed
+
 
 def encode_tfs(search: FlightSearch) -> str:
     """
@@ -235,16 +247,12 @@ def encode_tfs(search: FlightSearch) -> str:
     payload: bytearray = bytearray(varint_field(1, 28) + varint_field(2, 2))
 
     # Field 3 contains the outbound flight leg
-    payload.extend(
-        message_field(3, flight_leg(departure, origin, destination))
-    )
+    payload.extend(message_field(3, flight_leg(departure, origin, destination)))
 
     # A return leg is encoded as another field 3 message with the airports
     # reversed, representing the journey back to the origin
     if returning is not None:
-        payload.extend(
-            message_field(3, flight_leg(returning, destination, origin))
-        )
+        payload.extend(message_field(3, flight_leg(returning, destination, origin)))
 
     # Encode each passenger as a repeated field 8 entry
     for name, count in passenger_counts:
@@ -266,7 +274,14 @@ def encode_tfs(search: FlightSearch) -> str:
     # Google Flights' token omits trailing Base64 padding characters
     return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
 
-def build_google_flights_url(search: FlightSearch, *, language: str | None = None, currency: str | None = None, tfu: str | None = DEFAULT_TFU) -> str:
+
+def build_google_flights_url(
+    search: FlightSearch,
+    *,
+    language: str | None = None,
+    currency: str | None = None,
+    tfu: str | None = DEFAULT_TFU,
+) -> str:
     """
     Return a scrapable Google Flights search URL for ``search``
     ``tfu`` defaults to the companion value in the supplied example. Set it to
