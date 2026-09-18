@@ -28,64 +28,64 @@ class FlightSearch:
     """
     Fields needed for a one-way or round-trip Google Flights search
     """
-    origin: str  # Departure airport code, e.g. "MXP".
-    destination: str  # Arrival airport code, e.g. "ACE".
-    departure_date: str | date  # Departure date as text or a date object.
-    return_date: str | date | None = None  # Optional return date for round trips.
-    cabin: str = "economy"  # Travel cabin, such as economy or business.
-    adults: int = 1  # Number of adult passengers.
-    children: int = 0  # Number of child passengers.
-    infants_in_seat: int = 0  # Infants occupying their own seat.
-    infants_on_lap: int = 0  # Infants traveling on an adult's lap.
+    origin: str  # Departure airport code, e.g. "MXP"
+    destination: str  # Arrival airport code, e.g. "ACE"
+    departure_date: str | date  # Departure date as text or a date object
+    return_date: str | date | None = None  # Optional return date for round trips
+    cabin: str = "economy"  # Travel cabin, such as economy or business
+    adults: int = 1  # Number of adult passengers
+    children: int = 0  # Number of child passengers
+    infants_in_seat: int = 0  # Infants occupying their own seat
+    infants_on_lap: int = 0  # Infants traveling on an adult's lap
 
 def varint(value: int) -> bytes:
     """
     Encode an unsigned integer using protobuf's base-128 varint format
     """
-    # Accept only values that fit in an unsigned 64-bit integer.
+    # Accept only values that fit in an unsigned 64-bit integer
     if not 0 <= value <= MAX_UINT64:
         raise ValueError("protobuf varint must be an unsigned 64-bit integer")
     encoded: bytearray = bytearray()
 
-    # Each byte stores 7 bits of the value.
-    # The high bit indicates that more bytes follow.
+    # Each byte stores 7 bits of the value
+    # The high bit indicates that more bytes follow
     while value > 0x7F:
         encoded.append((value & 0x7F) | 0x80)
 
-        # Move to the next group of 7 bits.
+        # Move to the next group of 7 bits
         value >>= 7
 
-    # Store the final 7 bits with the continuation bit cleared.
+    # Store the final 7 bits with the continuation bit cleared
     encoded.append(value)
 
-    # Convert the mutable bytearray to immutable bytes.
+    # Convert the mutable bytearray to immutable bytes
     return bytes(encoded)
 
 def varint_field(field_number: int, value: int) -> bytes:
     """
     Encode a protobuf field whose value uses the varint wire type
     """
-    # Protobuf encodes the field number and wire type together.
-    # Wire type 0 represents a varint, so shifting by 3 is sufficient.
+    # Protobuf encodes the field number and wire type together
+    # Wire type 0 represents a varint, so shifting by 3 is sufficient
     field_key: int = field_number << 3
 
-    # Encode the field key, followed by the actual integer value.
+    # Encode the field key, followed by the actual integer value
     return varint(field_key) + varint(value)
 
 def bytes_field(field_number: int, value: bytes) -> bytes:
     """
     Encode a protobuf length-delimited bytes field
     """
-    # Wire type 2 means the field contains length-delimited data.
+    # Wire type 2 means the field contains length-delimited data
     field_key: int = (field_number << 3) | 2
 
-    # Protobuf stores: field key, payload length, then payload bytes.
+    # Protobuf stores: field key, payload length, then payload bytes
     return varint(field_key) + varint(len(value)) + value
 
 def string_field(field_number: int, value: str) -> bytes:
-    """Encode a protobuf string field as UTF-8 bytes."""
-    # Protobuf strings are length-delimited fields.
-    # Convert the Python string to UTF-8, then reuse the bytes-field encoder.
+    """Encode a protobuf string field as UTF-8 bytes"""
+    # Protobuf strings are length-delimited fields
+    # Convert the Python string to UTF-8, then reuse the bytes-field encoder
     encoded_value: bytes = value.encode("utf-8")
     return bytes_field(field_number, encoded_value)
 
@@ -93,50 +93,50 @@ def message_field(field_number: int, value: bytes) -> bytes:
     """
     Encode a nested protobuf message field
     """
-    # A nested message is serialized as bytes.
+    # A nested message is serialized as bytes
     # Reuse the bytes-field encoder because messages use wire type 2
-    # (length-delimited).
+    # (length-delimited)
     return bytes_field(field_number, value)
 
 def airport(code: str) -> bytes:
     """
     Encode an airport as a protobuf message
     """
-    # Field 1 marks this as an exact airport rather than a broader location.
+    # Field 1 marks this as an exact airport rather than a broader location
     exact_airport_marker: bytes = varint_field(1, 1)
 
-    # Field 2 stores the airport's IATA code, such as "MXP".
+    # Field 2 stores the airport's IATA code, such as "MXP"
     iata_code: bytes = string_field(2, code)
 
-    # Combine both encoded fields into the airport message.
+    # Combine both encoded fields into the airport message
     return exact_airport_marker + iata_code
 
 def flight_leg(day: date, origin: str, destination: str) -> bytes:
     """
     Encode one flight leg as a protobuf message
     """
-    # Field 2 stores the travel date in ISO-8601 format, e.g. "2026-09-18".
+    # Field 2 stores the travel date in ISO-8601 format, e.g. "2026-09-18"
     travel_date: bytes = string_field(2, day.isoformat())
 
-    # Fields 13 and 14 store the origin and destination airport messages.
+    # Fields 13 and 14 store the origin and destination airport messages
     origin_airport: bytes = message_field(13, airport(origin))
     destination_airport: bytes = message_field(14, airport(destination))
 
-    # Combine the date, origin, and destination fields.
+    # Combine the date, origin, and destination fields
     return travel_date + origin_airport + destination_airport
 
 def airport_code(value: str, name: str) -> str:
     """
     Validate and normalize a three-letter IATA airport code
     """
-    # Reject values that are not strings.
+    # Reject values that are not strings
     if not isinstance(value, str):
         raise ValueError(f"{name} must be a three-letter IATA airport code")
 
-    # Remove surrounding whitespace and normalize to uppercase.
+    # Remove surrounding whitespace and normalize to uppercase
     code: str = value.strip().upper()
 
-    # Ensure the code contains exactly three uppercase letters.
+    # Ensure the code contains exactly three uppercase letters
     if not re.fullmatch(r"[A-Z]{3}", code):
         raise ValueError(f"{name} must be a three-letter IATA airport code")
 
