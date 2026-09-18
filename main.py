@@ -169,3 +169,99 @@ def parse_date(value: str | date, name: str) -> date:
         raise ValueError(f"{name} must use YYYY-MM-DD format")
 
     return parsed
+
+def encode_tfs(search: FlightSearch) -> str:
+    """
+    Encode a FlightSearch as Google Flights' URL-safe ``tfs`` value
+    """
+
+    # Normalize and validate the departure and arrival airport codes
+    origin: str = airport_code(search.origin, "origin")
+    destination: str = airport_code(search.destination, "destination")
+
+    # A flight cannot depart from and arrive at the same airport
+    if origin == destination:
+        raise ValueError("origin and destination must be different airports")
+
+    # Parse and validate the departure date
+    departure: date = parse_date(search.departure_date, "departure_date")
+
+    # Parse the return date when this is a round-trip search
+    returning: date | None = (
+        parse_date(search.return_date, "return_date")
+        if search.return_date is not None
+        else None
+    )
+
+    # A return flight cannot occur before the departure flight
+    if returning is not None and returning < departure:
+        raise ValueError("return_date cannot be before departure_date")
+
+    # Normalize the cabin name so inputs like "Premium Economy" work
+    # consistently with the values used by the protobuf payload
+    cabin: str = search.cabin.strip().lower().replace(" ", "-").replace("_", "-")
+
+    # Ensure the cabin is supported by the encoder
+    if cabin not in CABIN_VALUES:
+        choices: str = ", ".join(CABIN_VALUES)
+        raise ValueError(f"cabin must be one of: {choices}")
+
+    # Group passenger categories with their requested counts
+    passenger_counts: tuple[tuple[str, int]] = (
+        ("adults", search.adults),
+        ("children", search.children),
+        ("infants_in_seat", search.infants_in_seat),
+        ("infants_on_lap", search.infants_on_lap),
+    )
+
+    # Validate that every passenger count is a non-negative integer
+    # bool is rejected explicitly because bool is a subclass of int in Python
+    for name, count in passenger_counts:
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise ValueError(f"{name} must be a non-negative integer")
+
+    # Apply the passenger constraints supported by Google Flights
+    total_passengers: int = sum(count for _, count in passenger_counts)
+
+    if search.adults < 1:
+        raise ValueError("at least one adult is required")
+    if total_passengers > 9:
+        raise ValueError("Google Flights searches support at most 9 passengers")
+    if search.infants_on_lap > search.adults:
+        raise ValueError("infants_on_lap cannot exceed the number of adults")
+
+    # These envelope fields and the all-results sentinel appear in the
+    # reference URL. Their meanings are not part of Google's public contract
+    payload: bytearray = bytearray(varint_field(1, 28) + varint_field(2, 2))
+
+    # Field 3 contains the outbound flight leg
+    payload.extend(
+        message_field(3, flight_leg(departure, origin, destination))
+    )
+
+    # A return leg is encoded as another field 3 message with the airports
+    # reversed, representing the journey back to the origin
+    if returning is not None:
+        payload.extend(
+            message_field(3, flight_leg(returning, destination, origin))
+        )
+
+    # Encode each passenger as a repeated field 8 entry
+    for name, count in passenger_counts:
+        passenger_value: int = PASSENGER_VALUES[name]
+        for _ in range(count):
+            payload.extend(varint_field(8, passenger_value))
+
+    # Encode the selected cabin
+    payload.extend(varint_field(9, CABIN_VALUES[cabin]))
+
+    # Add reference-payload marker fields
+    payload.extend(varint_field(14, 1))
+    payload.extend(message_field(16, varint_field(1, MAX_UINT64)))
+
+    # Mark the search as round-trip or one-way
+    payload.extend(varint_field(19, 1 if returning is not None else 2))
+
+    # Encode the protobuf bytes using URL-safe Base64
+    # Google Flights' token omits trailing Base64 padding characters
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
