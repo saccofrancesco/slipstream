@@ -67,7 +67,17 @@ def varint_field(field_number: int, value: int) -> bytes:
     """
     # Protobuf encodes the field number and wire type together.
     # Wire type 0 represents a varint, so shifting by 3 is sufficient.
-    field_key = field_number << 3
+    field_key: int = field_number << 3
 
     # Encode the field key, followed by the actual integer value.
     return varint(field_key) + varint(value)
+
+def bytes_field(field_number: int, value: bytes) -> bytes:
+    """
+    Encode a protobuf length-delimited bytes field
+    """
+    # Wire type 2 means the field contains length-delimited data.
+    field_key: int = (field_number << 3) | 2
+
+    # Protobuf stores: field key, payload length, then payload bytes.
+    return varint(field_key) + varint(len(value)) + value
