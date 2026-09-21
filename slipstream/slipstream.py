@@ -2,20 +2,30 @@
 import reflex as rx
 
 
+# Q&A component to display question and answers as like in a chat
+def qa(question: str, answer: str) -> rx.Component:
+    return rx.box(
+        rx.box(question, text_align="right"),
+        rx.box(answer, text_align="left"),
+        margin_y="1em",
+    )
+
+
+# Chat component containing multiple Q&A components instances
+def chat() -> rx.Component:
+    qa_pairs: list[tuple[str, str]] = [
+        ("What is Reflex?", "A way to build web apps in pure Python!"),
+        (
+            "What can I make with it?",
+            "Anything from a simple website to a complex web app!",
+        ),
+    ]
+    return rx.box(*[qa(question, answer) for question, answer in qa_pairs])
+
+
 # Main application page component
 def index() -> rx.Component:
-    return rx.container(
-        rx.box(
-            "What is Reflex?",
-            # The user's question is on the right
-            text_align="right",
-        ),
-        rx.box(
-            "A way to build web apps in pure Python!",
-            # The answer to the user's question is on the left
-            text_align="left",
-        ),
-    )
+    return rx.container(chat())
 
 
 # Instanciating the app object and adding the index page as the root
