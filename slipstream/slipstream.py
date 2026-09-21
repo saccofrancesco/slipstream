@@ -23,11 +23,16 @@ def chat() -> rx.Component:
     return rx.box(*[qa(question, answer) for question, answer in qa_pairs])
 
 
+# Component for the user interaction section
+def action_bar() -> rx.Component:
+    return rx.hstack(rx.input(placeholder="Ask a question"), rx.button("Ask"))
+
+
 # Main application page component
 def index() -> rx.Component:
-    return rx.container(chat())
+    return rx.container(chat(), action_bar())
 
 
 # Instanciating the app object and adding the index page as the root
-app = rx.App()
+app: rx.App = rx.App()
 app.add_page(index)
