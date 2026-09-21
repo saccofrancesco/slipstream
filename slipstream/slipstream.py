@@ -1,8 +1,9 @@
 # Importing libraries
 import reflex as rx
 
-# App's styles imports
+# App's styles and state imports
 from slipstream import style
+from slipstream.state import State
 
 
 # Q&A component to display question and answers as like in a chat
@@ -17,21 +18,20 @@ def qa(question: str, answer: str) -> rx.Component:
 
 # Chat component containing multiple Q&A components instances
 def chat() -> rx.Component:
-    qa_pairs: list[tuple[str, str]] = [
-        ("What is Reflex?", "A way to build web apps in pure Python!"),
-        (
-            "What can I make with it?",
-            "Anything from a simple website to a complex web app!",
-        ),
-    ]
-    return rx.box(*[qa(question, answer) for question, answer in qa_pairs])
+    return rx.box(
+        rx.foreach(State.chat_history, lambda messages: qa(messages[0], messages[1]))
+    )
 
 
 # Component for the user interaction section
 def action_bar() -> rx.Component:
     return rx.hstack(
-        rx.input(placeholder="Ask a question", style=style.input_style),
-        rx.button("Ask", style=style.button_style),
+        rx.input(
+            placeholder="Ask a question",
+            style=style.input_style,
+            on_change=State.set_question,
+        ),
+        rx.button("Ask", style=style.button_style, on_click=State.answer),
         width="100%",
     )
 
