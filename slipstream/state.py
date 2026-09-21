@@ -22,3 +22,6 @@ class State(rx.State):
         # Not very smart right now...
         answer: str = "I don't know!"
         self.chat_history.append((self.question, answer))
+
+        # Clear the question value to empty the binded input in the UI
+        self.question = ""
