@@ -21,5 +21,8 @@ def navbar() -> rx.Component:
             ),
             justify="between",
             align="center",
-        )
+        ),
+        bg=rx.Color("accent", 3),
+        padding="1em",
+        width="100%",
     )
