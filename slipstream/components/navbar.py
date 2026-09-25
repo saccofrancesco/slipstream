@@ -15,7 +15,7 @@ def navbar() -> rx.Component:
         rx.hstack(
             rx.heading("Slipstream", as_="h2", size="7", weight="bold"),
             rx.hstack(
-                navbar_icon_item("Drivers", "trophy", "/#"),
+                navbar_icon_item("Drivers", "trophy", "/drivers"),
                 navbar_icon_item("Teams", "users", "/#"),
                 spacing="6",
             ),
