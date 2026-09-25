@@ -1,12 +1,12 @@
 # Importing libraries and components
 import reflex as rx
-from slipstream.components import content_container, navbar
+from slipstream.components import container, navbar
 
 
 # Defining the index default page
 @rx.page("/", "Home")
 def index() -> rx.Component:
-    return content_container(
+    return container(
         rx.vstack(
             navbar(),
             rx.center(
