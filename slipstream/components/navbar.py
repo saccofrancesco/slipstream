@@ -25,4 +25,7 @@ def navbar() -> rx.Component:
         ),
         padding_y="1em",
         width="100%",
+        position="sticky",
+        top="0",
+        z_index="10",
     )
