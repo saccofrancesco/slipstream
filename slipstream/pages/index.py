@@ -10,7 +10,7 @@ def index() -> rx.Component:
         navbar(),
         container(
             rx.center(
-                rx.heading("Welcome to Slipstream", as_="h1", size="9"),
+                rx.heading("WELCOME TO SLIPSTREAM", as_="h1", size="9"),
                 width="100%",
                 min_height="calc(100vh - 5rem)",
             ),

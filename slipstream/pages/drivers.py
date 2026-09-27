@@ -33,7 +33,7 @@ def drivers() -> rx.Component:
         navbar(),
         container(
             rx.vstack(
-                rx.heading("Drivers standings", as_="h1", size="7"),
+                rx.heading("DRIVERS STANDINGS", as_="h1", size="7"),
                 rx.cond(
                     DriversState.loading,
                     rx.center(rx.spinner(), width="100%", padding_y="4em"),
