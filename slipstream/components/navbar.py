@@ -1,5 +1,6 @@
 # Importing libraries
 import reflex as rx
+from .layout import container
 
 
 # Single navbar icon item
@@ -12,18 +13,20 @@ def navbar_icon_item(text: str, icon: str, url: str) -> rx.Component:
 # Full navbar component to be displayed in all pages
 def navbar() -> rx.Component:
     return rx.box(
-        rx.hstack(
-            rx.heading("Slipstream", as_="h2", size="7", weight="bold"),
+        container(
             rx.hstack(
-                navbar_icon_item("Drivers", "trophy", "/drivers"),
-                navbar_icon_item("Teams", "users", "/#"),
-                spacing="6",
+                rx.heading("Slipstream", as_="h2", size="7", weight="bold"),
+                rx.hstack(
+                    navbar_icon_item("Drivers", "trophy", "/drivers"),
+                    navbar_icon_item("Teams", "users", "/#"),
+                    spacing="6",
+                ),
+                justify="between",
+                align="center",
+                width="100%",
             ),
-            justify="between",
-            align="center",
-            width="100%",
         ),
-        padding_y="1em",
+        bg=rx.color("accent", 3),
         width="100%",
         position="sticky",
         top="0",
