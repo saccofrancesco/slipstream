@@ -15,10 +15,10 @@ def navbar() -> rx.Component:
     return rx.box(
         container(
             rx.hstack(
-                rx.heading("Slipstream", as_="h2", size="7", weight="bold"),
+                rx.heading("SLIPSTREAM", as_="h2", size="7", weight="bold"),
                 rx.hstack(
-                    navbar_icon_item("Drivers", "trophy", "/drivers"),
-                    navbar_icon_item("Teams", "users", "/#"),
+                    navbar_icon_item("DRIVERS", "trophy", "/drivers"),
+                    navbar_icon_item("TEAMS", "users", "/#"),
                     spacing="6",
                 ),
                 justify="between",
