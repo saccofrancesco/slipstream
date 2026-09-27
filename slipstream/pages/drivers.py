@@ -29,9 +29,9 @@ class DriversState(rx.State):
 # Defining the page to show drivers details such as standings and results
 @rx.page("/drivers", "Drivers", on_load=DriversState.load_standings)
 def drivers() -> rx.Component:
-    return container(
-        rx.vstack(
-            navbar(),
+    return rx.vstack(
+        navbar(),
+        container(
             rx.vstack(
                 rx.heading("Drivers standings", as_="h1", size="7"),
                 rx.cond(
@@ -52,8 +52,9 @@ def drivers() -> rx.Component:
                 align="stretch",
                 spacing="4",
             ),
-            width="100%",
-            min_height="100vh",
-            spacing="0",
         ),
+        width="100%",
+        align="center",
+        min_height="100vh",
+        spacing="0",
     )
