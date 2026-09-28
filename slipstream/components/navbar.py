@@ -36,7 +36,7 @@ def navbar() -> rx.Component:
                 ),
                 rx.hstack(
                     navbar_icon_item("DRIVERS", "trophy", "/drivers"),
-                    navbar_icon_item("TEAMS", "users", "/#"),
+                    navbar_icon_item("TEAMS", "users", "/constructors"),
                     spacing="6",
                 ),
                 justify="between",
