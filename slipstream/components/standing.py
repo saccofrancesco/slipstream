@@ -3,7 +3,7 @@ import reflex as rx
 
 
 # Card for one driver's championship standing.
-def standing(driver) -> rx.Component:
+def driver_standing(driver) -> rx.Component:
     return rx.card(
         rx.hstack(
             rx.box(
