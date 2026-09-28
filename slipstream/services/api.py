@@ -32,9 +32,7 @@ def get_driver_standings(
     season: int | str = "current", round: int | str = "last"
 ) -> list[dict[str, str]]:
     response = ergast.get_driver_standings(
-        season=season,
-        round=round,
-        result_type="raw",
+        season=season, round=round, result_type="raw"
     )
     if not response:
         return []
@@ -61,6 +59,31 @@ def get_driver_standings(
                 "team": ", ".join(team_names),
                 "points": format_value(row.get("points")),
                 "team_color": team_color,
+            }
+        )
+    return standings
+
+
+# Retrieve team standings for a season and round, then flatten FastF1's raw
+# response into values that can be stored directly in Reflex state.
+def get_constructor_standings(
+    season: int | str = "current", round: int | str = "last"
+) -> list[dict[str, str]]:
+    response = ergast.get_constructor_standings(
+        season=season, round=round, result_type="raw"
+    )
+    if not response:
+        return []
+    rows: list[dict[str, Any]] = response[0].get("ConstructorStandings", [])
+    standings: list[dict[str, str]] = []
+    for row in rows:
+        constructor: dict[str, Any] = row.get("Constructor") or {}
+        standings.append(
+            {
+                "position": format_value(row.get("position")),
+                "constructor": format_value(constructor.get("name")),
+                "points": format_value(row.get("points")),
+                "team_color": get_team_color([constructor]),
             }
         )
     return standings
