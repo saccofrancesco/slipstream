@@ -47,7 +47,7 @@ def constructors() -> rx.Component:
                             ),
                             width="100%",
                             align="stretch",
-                            spacing="3",
+                            spacing="2",
                         ),
                     ),
                 ),

@@ -44,7 +44,7 @@ def drivers() -> rx.Component:
                             rx.foreach(DriversState.standings, driver_standing),
                             width="100%",
                             align="stretch",
-                            spacing="3",
+                            spacing="2",
                         ),
                     ),
                 ),
