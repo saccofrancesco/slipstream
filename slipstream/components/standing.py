@@ -4,6 +4,7 @@ import reflex as rx
 
 # Card for one driver's championship standing.
 def driver_standing(driver) -> rx.Component:
+    number_color, podium_outline = podium_styles(driver["position"])
     return rx.card(
         rx.hstack(
             rx.box(
@@ -21,6 +22,7 @@ def driver_standing(driver) -> rx.Component:
                         size="5",
                         weight="bold",
                         text_align="center",
+                        color=number_color,
                     ),
                     rx.text(
                         driver["given_name"],
@@ -82,12 +84,15 @@ def driver_standing(driver) -> rx.Component:
             width="100%",
         ),
         size="1",
+        outline=podium_outline,
+        outline_offset="-1px",
         width="100%",
     )
 
 
 # Card for one constructor's championship standing.
 def constructor_standing(constructor) -> rx.Component:
+    number_color, podium_outline = podium_styles(constructor["position"])
     return rx.card(
         rx.hstack(
             rx.box(
@@ -105,6 +110,7 @@ def constructor_standing(constructor) -> rx.Component:
                         size="5",
                         weight="bold",
                         text_align="center",
+                        color=number_color,
                     ),
                     rx.box(),
                     rx.text(
@@ -143,5 +149,29 @@ def constructor_standing(constructor) -> rx.Component:
             width="100%",
         ),
         size="1",
+        outline=podium_outline,
+        outline_offset="-1px",
         width="100%",
     )
+
+
+# Helper function to compute if the standing need a custom podium outline style or not
+def podium_styles(position):
+    first: bool = position == "1"
+    second: bool = position == "2"
+    third: bool = position == "3"
+    number_color: str = rx.cond(
+        first,
+        "#A87500",
+        rx.cond(second, "#66717E", rx.cond(third, "#9C4F20", "inherit")),
+    )
+    outline: str = rx.cond(
+        first,
+        "2px solid #D6B143",
+        rx.cond(
+            second,
+            "2px solid #AEB7C2",
+            rx.cond(third, "2px solid #B87538", "none"),
+        ),
+    )
+    return number_color, outline
