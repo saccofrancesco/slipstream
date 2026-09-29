@@ -9,7 +9,7 @@ def driver_standing(driver) -> rx.Component:
             rx.box(
                 width="0.5em",
                 min_width="0.5px",
-                min_height="3em",
+                min_height="2em",
                 align_self="stretch",
                 background_color=driver["team_color"],
                 border_radius="1em",
@@ -18,13 +18,13 @@ def driver_standing(driver) -> rx.Component:
                 rx.grid(
                     rx.text(
                         driver["position"],
-                        size="6",
+                        size="5",
                         weight="bold",
                         text_align="center",
                     ),
                     rx.text(
                         driver["given_name"],
-                        size="5",
+                        size="4",
                         text_transform="uppercase",
                         white_space="nowrap",
                         overflow="hidden",
@@ -32,7 +32,7 @@ def driver_standing(driver) -> rx.Component:
                     ),
                     rx.text(
                         driver["family_name"],
-                        size="5",
+                        size="4",
                         weight="bold",
                         text_transform="uppercase",
                         white_space="nowrap",
@@ -41,7 +41,7 @@ def driver_standing(driver) -> rx.Component:
                     ),
                     rx.text(
                         driver["nationality"],
-                        size="4",
+                        size="3",
                         color="gray",
                         text_transform="uppercase",
                         white_space="nowrap",
@@ -50,7 +50,7 @@ def driver_standing(driver) -> rx.Component:
                     ),
                     rx.text(
                         driver["team"],
-                        size="4",
+                        size="3",
                         weight="medium",
                         text_transform="uppercase",
                         white_space="nowrap",
@@ -59,7 +59,7 @@ def driver_standing(driver) -> rx.Component:
                     ),
                     rx.hstack(
                         rx.text("PTS", size="3", weight="bold", color="gray"),
-                        rx.heading(driver["points"], size="6"),
+                        rx.heading(driver["points"], size="5"),
                         align="center",
                         justify="end",
                         spacing="2",
@@ -81,6 +81,7 @@ def driver_standing(driver) -> rx.Component:
             spacing="3",
             width="100%",
         ),
+        size="1",
         width="100%",
     )
 
@@ -92,7 +93,7 @@ def constructor_standing(constructor) -> rx.Component:
             rx.box(
                 width="0.5em",
                 min_width="0.5px",
-                min_height="3em",
+                min_height="2em",
                 align_self="stretch",
                 background_color=constructor["team_color"],
                 border_radius="1em",
@@ -101,14 +102,14 @@ def constructor_standing(constructor) -> rx.Component:
                 rx.grid(
                     rx.text(
                         constructor["position"],
-                        size="6",
+                        size="5",
                         weight="bold",
                         text_align="center",
                     ),
                     rx.box(),
                     rx.text(
                         constructor["constructor"],
-                        size="5",
+                        size="4",
                         weight="bold",
                         text_transform="uppercase",
                         white_space="nowrap",
@@ -119,7 +120,7 @@ def constructor_standing(constructor) -> rx.Component:
                     rx.box(),
                     rx.hstack(
                         rx.text("PTS", size="3", weight="bold", color="gray"),
-                        rx.heading(constructor["points"], size="6"),
+                        rx.heading(constructor["points"], size="5"),
                         align="center",
                         justify="end",
                         spacing="2",
@@ -141,5 +142,6 @@ def constructor_standing(constructor) -> rx.Component:
             spacing="3",
             width="100%",
         ),
+        size="1",
         width="100%",
     )
