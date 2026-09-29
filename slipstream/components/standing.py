@@ -162,16 +162,16 @@ def podium_styles(position):
     third: bool = position == "3"
     number_color: str = rx.cond(
         first,
-        "#A87500",
-        rx.cond(second, "#66717E", rx.cond(third, "#9C4F20", "inherit")),
+        "#E2C15A",
+        rx.cond(second, "#C5CED8", rx.cond(third, "#CC8950", "inherit")),
     )
     outline: str = rx.cond(
         first,
-        "2px solid #D6B143",
+        "2px solid #E2C15A",
         rx.cond(
             second,
-            "2px solid #AEB7C2",
-            rx.cond(third, "2px solid #B87538", "none"),
+            "2px solid #C5CED8",
+            rx.cond(third, "2px solid #CC8950", "none"),
         ),
     )
     return number_color, outline
