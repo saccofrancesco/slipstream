@@ -1,7 +1,7 @@
 # Importing libraries and components
 import asyncio
 import reflex as rx
-from slipstream.components import container, constructor_standing, navbar
+from slipstream.components import container, navbar, standing
 from slipstream.services import get_constructor_standings
 
 
@@ -43,7 +43,9 @@ def constructors() -> rx.Component:
                         rx.vstack(
                             rx.foreach(
                                 ConstructorsState.standings,
-                                constructor_standing,
+                                lambda constructor: standing(
+                                    constructor, is_driver=False
+                                ),
                             ),
                             width="100%",
                             align="stretch",

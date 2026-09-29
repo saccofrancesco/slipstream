@@ -1,7 +1,7 @@
 # Importing libraries and components
 import asyncio
 import reflex as rx
-from slipstream.components import container, navbar, driver_standing
+from slipstream.components import container, navbar, standing
 from slipstream.services import get_driver_standings
 
 
@@ -41,7 +41,10 @@ def drivers() -> rx.Component:
                         DriversState.error != "",
                         rx.text(DriversState.error, color="tomato"),
                         rx.vstack(
-                            rx.foreach(DriversState.standings, driver_standing),
+                            rx.foreach(
+                                DriversState.standings,
+                                lambda driver: standing(driver, is_driver=True),
+                            ),
                             width="100%",
                             align="stretch",
                             spacing="2",
