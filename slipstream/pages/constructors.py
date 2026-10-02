@@ -1,7 +1,14 @@
 # Importing libraries and components
 import asyncio
 import reflex as rx
-from slipstream.components import container, navbar, standing
+from slipstream.components import container, navbar
+from slipstream.components.championship import (
+    leaderboard_section,
+    loading_panel,
+    message_panel,
+    page_header,
+    podium_section,
+)
 from slipstream.services import get_constructor_standings
 
 
@@ -9,6 +16,22 @@ class ConstructorsState(rx.State):
     standings: list[dict[str, str]] = []
     loading: bool = False
     error: str = ""
+
+    @rx.var
+    def podium_standings(self) -> list[dict[str, str]]:
+        return self.standings[:3]
+
+    @rx.var
+    def remaining_standings(self) -> list[dict[str, str]]:
+        return self.standings[3:]
+
+    @rx.var
+    def has_remaining_standings(self) -> bool:
+        return len(self.standings) > 3
+
+    @rx.var
+    def has_standings(self) -> bool:
+        return bool(self.standings)
 
     @rx.event
     async def load_standings(self):
@@ -27,35 +50,48 @@ class ConstructorsState(rx.State):
 
 
 # Defining the page to show constructor championship standings.
-@rx.page("/constructors", "Constructors", on_load=ConstructorsState.load_standings)
+@rx.page("/constructors", "Teams", on_load=ConstructorsState.load_standings)
 def constructors() -> rx.Component:
+    standings_content = rx.vstack(
+        podium_section(ConstructorsState.podium_standings, is_driver=False),
+        rx.cond(
+            ConstructorsState.has_remaining_standings,
+            leaderboard_section(
+                ConstructorsState.remaining_standings, is_driver=False
+            ),
+            rx.fragment(),
+        ),
+        align="stretch",
+        spacing="7",
+        width="100%",
+        padding_bottom="8",
+    )
+
     return rx.vstack(
-        navbar(),
+        navbar(active_section="teams"),
         container(
             rx.vstack(
-                rx.heading("CONSTRUCTOR STANDINGS", as_="h1", size="7"),
+                page_header(
+                    "Team championship",
+                    "Teams’ Championship",
+                    "See how each team is shaping the constructors’ championship.",
+                ),
                 rx.cond(
                     ConstructorsState.loading,
-                    rx.center(rx.spinner(), width="100%", padding_y="4em"),
+                    loading_panel(),
                     rx.cond(
                         ConstructorsState.error != "",
-                        rx.text(ConstructorsState.error, color="tomato"),
-                        rx.vstack(
-                            rx.foreach(
-                                ConstructorsState.standings,
-                                lambda constructor: standing(
-                                    constructor, is_driver=False
-                                ),
-                            ),
-                            width="100%",
-                            align="stretch",
-                            spacing="2",
+                        message_panel(ConstructorsState.error),
+                        rx.cond(
+                            ConstructorsState.has_standings,
+                            standings_content,
+                            message_panel("No standings are available yet."),
                         ),
                     ),
                 ),
-                width="100%",
                 align="stretch",
-                spacing="4",
+                spacing="6",
+                width="100%",
             ),
         ),
         width="100%",
