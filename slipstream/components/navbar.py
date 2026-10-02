@@ -1,10 +1,29 @@
-# Importing libraries
+"""Navigation components shared by every application page."""
+
+# Reflex provides the component and styling primitives for navigation.
 import reflex as rx
+
+# Reuse the shared page-width wrapper for the header contents.
 from .layout import container
 
 
-# Single navbar icon item
-def navbar_icon_item(text: str, icon: str, url: str, active: bool = False) -> rx.Component:
+def navbar_icon_item(
+    text: str,
+    icon: str,
+    url: str,
+    active: bool = False,
+) -> rx.Component:
+    """Build a linked navigation item with an optional active state.
+
+    Args:
+        text: Label displayed beside the icon.
+        icon: Icon name accepted by ``rx.icon``.
+        url: Destination route for the link.
+        active: Whether the link represents the current page.
+
+    Returns:
+        A styled Reflex link containing the icon and label.
+    """
     return rx.link(
         rx.hstack(rx.icon(icon), rx.text(text, size="4", weight="medium")),
         href=url,
@@ -25,8 +44,16 @@ def navbar_icon_item(text: str, icon: str, url: str, active: bool = False) -> rx
     )
 
 
-# Full navbar component to be displayed in all pages
 def navbar(active_section: str | None = None) -> rx.Component:
+    """Build the sticky site header and its section navigation links.
+
+    Args:
+        active_section: Name of the currently selected navigation section.
+
+    Returns:
+        A full-width header containing the brand link and page links.
+    """
+    # Keep the brand link's appearance unchanged across its interaction states.
     return rx.box(
         container(
             rx.hstack(
