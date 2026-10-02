@@ -4,16 +4,29 @@ from .layout import container
 
 
 # Single navbar icon item
-def navbar_icon_item(text: str, icon: str, url: str) -> rx.Component:
+def navbar_icon_item(text: str, icon: str, url: str, active: bool = False) -> rx.Component:
     return rx.link(
         rx.hstack(rx.icon(icon), rx.text(text, size="4", weight="medium")),
         href=url,
         underline="none",
+        padding_x="2",
+        padding_y="1",
+        border_radius="full",
+        style={
+            "color": rx.color("accent", 11) if active else "inherit",
+            "background_color": rx.color("accent", 3) if active else "transparent",
+            "transition": "background-color 150ms ease, color 150ms ease",
+            "_hover": {
+                "color": rx.color("accent", 11),
+                "background_color": rx.color("accent", 3),
+                "text_decoration": "none",
+            },
+        },
     )
 
 
 # Full navbar component to be displayed in all pages
-def navbar() -> rx.Component:
+def navbar(active_section: str | None = None) -> rx.Component:
     return rx.box(
         container(
             rx.hstack(
@@ -35,8 +48,12 @@ def navbar() -> rx.Component:
                     },
                 ),
                 rx.hstack(
-                    navbar_icon_item("DRIVERS", "trophy", "/drivers"),
-                    navbar_icon_item("TEAMS", "users", "/constructors"),
+                    navbar_icon_item(
+                        "DRIVERS", "trophy", "/drivers", active_section == "drivers"
+                    ),
+                    navbar_icon_item(
+                        "TEAMS", "users", "/constructors", active_section == "teams"
+                    ),
                     spacing="6",
                 ),
                 justify="between",
