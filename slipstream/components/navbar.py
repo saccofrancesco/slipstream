@@ -24,6 +24,7 @@ def navbar_icon_item(
     Returns:
         A styled Reflex link containing the icon and label.
     """
+    # Use text color to show interaction states without adding a background fill.
     return rx.link(
         rx.hstack(rx.icon(icon), rx.text(text, size="4", weight="medium")),
         href=url,
@@ -31,15 +32,13 @@ def navbar_icon_item(
         padding_x="2",
         padding_y="1",
         border_radius="full",
-        style={
-            "color": rx.color("accent", 11) if active else "inherit",
-            "background_color": rx.color("accent", 3) if active else "transparent",
-            "transition": "background-color 150ms ease, color 150ms ease",
-            "_hover": {
-                "color": rx.color("accent", 11),
-                "background_color": rx.color("accent", 3),
-                "text_decoration": "none",
-            },
+        color=rx.color("accent", 11) if active else "inherit",
+        background_color="transparent",
+        transition="color 150ms ease",
+        _hover={
+            "color": rx.color("accent", 11),
+            "background_color": "transparent",
+            "text_decoration": "none",
         },
     )
 
@@ -88,7 +87,11 @@ def navbar(active_section: str | None = None) -> rx.Component:
                 width="100%",
             ),
         ),
-        bg=rx.color("accent", 3),
+        # Use a near-background surface and a fine edge to distinguish the sticky bar.
+        bg=rx.color("gray", 2),
+        border_bottom_width="1px",
+        border_bottom_style="solid",
+        border_bottom_color=rx.color("gray", 4),
         width="100%",
         position="sticky",
         top="0",
