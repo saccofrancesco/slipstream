@@ -1,12 +1,34 @@
-# Importing libraries
+"""Build reusable cards for championship standings."""
+
+# Reflex provides the reactive values and UI components used by this module.
 import reflex as rx
 
 
-# Card for a podium entry or a row in the remaining championship standings.
-def standing(entry, is_driver: bool, featured: bool = False) -> rx.Component:
-    number_color, card_border_color = podium_styles(entry["position"])
+def standing(
+    entry: rx.Var[dict[str, str]],
+    is_driver: bool,
+    featured: bool = False,
+) -> rx.Component:
+    """Build a card for a driver or constructor championship standing.
+
+    Args:
+        entry: Reactive standing data used to populate the card.
+        is_driver: Whether the entry describes a driver.
+        featured: Whether the entry is displayed as part of the podium.
+
+    Returns:
+        A Reflex card containing the standing details.
+    """
+    # Select the text and border colors for this entry's position.
+    podium_colors: tuple[rx.Var[str], rx.Var[str]] = podium_styles(entry["position"])
+    number_color: rx.Var[str] = podium_colors[0]
+    card_border_color: rx.Var[str] = podium_colors[1]
+
+    # Build the identity details appropriate to the entry type.
+    identity: rx.Component
     if is_driver:
-        identity: rx.Component = rx.vstack(
+        # Show a driver's name above their team and nationality.
+        identity = rx.vstack(
             rx.text(
                 entry["given_name"],
                 " ",
@@ -46,6 +68,7 @@ def standing(entry, is_driver: bool, featured: bool = False) -> rx.Component:
             width="100%",
         )
     else:
+        # Keep a constructor's name on one line.
         identity = rx.hstack(
             rx.text(
                 entry["constructor"],
@@ -61,8 +84,10 @@ def standing(entry, is_driver: bool, featured: bool = False) -> rx.Component:
             width="100%",
         )
 
+    # Arrange the rank, identity, and points in a single card.
     return rx.card(
         rx.hstack(
+            # Mark the card with the team's color.
             rx.box(
                 width="0.5em",
                 min_width="0.5em",
@@ -71,7 +96,9 @@ def standing(entry, is_driver: bool, featured: bool = False) -> rx.Component:
                 background_color=entry["team_color"],
                 border_radius="1em",
             ),
+            # Center rank and identity, with points in a right-aligned column.
             rx.grid(
+                # Show the position and highlight podium ranks with their medal color.
                 rx.vstack(
                     rx.text(
                         "RANK",
@@ -91,6 +118,7 @@ def standing(entry, is_driver: bool, featured: bool = False) -> rx.Component:
                     spacing="1",
                 ),
                 identity,
+                # Keep the points label and total aligned at the end of the row.
                 rx.vstack(
                     rx.text(
                         "POINTS",
@@ -127,17 +155,30 @@ def standing(entry, is_driver: bool, featured: bool = False) -> rx.Component:
     )
 
 
-# Return the podium number and card border colors for a standing position.
-def podium_styles(position):
-    first: bool = position == "1"
-    second: bool = position == "2"
-    third: bool = position == "3"
-    number_color: str = rx.cond(
+def podium_styles(
+    position: rx.Var[str],
+) -> tuple[rx.Var[str], rx.Var[str]]:
+    """Return reactive number and border colors for a standing position.
+
+    Args:
+        position: Reactive variable containing the entry's rank.
+
+    Returns:
+        A pair containing the rank number color and card border color.
+    """
+    # Keep rank checks reactive so Reflex can evaluate them in the browser.
+    first: rx.Var[bool] = position == "1"
+    second: rx.Var[bool] = position == "2"
+    third: rx.Var[bool] = position == "3"
+
+    # Use medal colors for the top three ranks and the default text color otherwise.
+    number_color: rx.Var[str] = rx.cond(
         first,
         "#E2C15A",
         rx.cond(second, "#C5CED8", rx.cond(third, "#CC8950", "inherit")),
     )
-    border_color: str = rx.cond(
+    # Match each podium card's border to its rank, with a neutral fallback.
+    border_color: rx.Var[str] = rx.cond(
         first,
         "#E2C15A",
         rx.cond(
