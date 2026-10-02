@@ -1,11 +1,15 @@
-# Importing libraries and components
+"""Landing page for the Slipstream application."""
+
+# Reflex provides the UI component and page registration APIs.
 import reflex as rx
+
+# Reuse the shared layout and site navigation.
 from slipstream.components import container, navbar
 
 
-# Defining the index default page
 @rx.page("/", "Home")
 def index() -> rx.Component:
+    """Render the landing page and its welcome heading."""
     return rx.vstack(
         navbar(),
         container(
