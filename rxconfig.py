@@ -1,6 +1,10 @@
+"""Configure the Reflex plugins used by the Slipstream application."""
+
+# Reflex provides the configuration and plugin interfaces used below.
 import reflex as rx
 
-config = rx.Config(
+# Enable the plugins that provide site maps, Tailwind styles, and Radix themes.
+config: rx.Config = rx.Config(
     app_name="slipstream",
     plugins=[
         rx.plugins.SitemapPlugin(),
