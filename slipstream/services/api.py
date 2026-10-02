@@ -1,6 +1,7 @@
 """Fetch and normalize Formula 1 championship standings."""
 
 # Use Any for the raw response shape supplied by the external client.
+from datetime import date, datetime
 from typing import Any
 
 # FastF1 provides the Ergast client used to retrieve standings.
@@ -12,6 +13,86 @@ fastf1.Cache.set_disabled()
 
 # Reuse one Ergast client for both driver and constructor requests.
 ergast: Ergast = Ergast()
+
+
+def get_available_seasons(start_year: int = 1950) -> list[str]:
+    """Return the available championship seasons, newest first.
+
+    Args:
+        start_year: Earliest season to include.
+
+    Returns:
+        Season years formatted as strings for the season selector.
+    """
+    response: Any = ergast.get_seasons(result_type="raw", limit=1000)
+    if not response:
+        return []
+
+    seasons: set[str] = {
+        format_value(row.get("season"))
+        for row in response
+        if row.get("season") is not None and int(row["season"]) >= start_year
+    }
+    return sorted(seasons, key=int, reverse=True)
+
+
+def get_completed_races(season: int | str) -> list[dict[str, str]]:
+    """Return completed races for a season as round selector options.
+
+    Args:
+        season: Season year selected by the user.
+
+    Returns:
+        Race options with round numbers and display labels, in calendar order.
+    """
+    response: Any = ergast.get_race_schedule(
+        season=int(season), result_type="raw", limit=1000
+    )
+    if not response:
+        return []
+
+    today: date = date.today()
+    races: list[dict[str, str]] = []
+    for race in response:
+        round_number: str = format_value(race.get("round"))
+        race_name: str = format_value(race.get("raceName"))
+        race_date: date | None = parse_race_date(race.get("date"))
+
+        # Do not offer a future race as a standings snapshot.
+        if not round_number or not race_name:
+            continue
+        if race_date is not None and race_date >= today:
+            continue
+
+        races.append(
+            {
+                "round": round_number,
+                "label": f"Round {round_number} · {race_name}",
+            }
+        )
+
+    return sorted(races, key=lambda race: int(race["round"]))
+
+
+def parse_race_date(value: object) -> date | None:
+    """Normalize a schedule date from FastF1's raw response.
+
+    Args:
+        value: Date value from the race schedule response.
+
+    Returns:
+        The calendar date when the value is parseable, otherwise ``None``.
+    """
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            return None
+    return None
 
 # Fallback colors keyed by constructor IDs in the standings response. The
 # endpoint does not consistently provide team colors.
