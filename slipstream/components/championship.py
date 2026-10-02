@@ -1,11 +1,24 @@
-"""Shared presentation for driver and team championship pages."""
+"""Build shared headers, standings sections, and feedback panels."""
 
+# Reflex provides the reactive values and UI components used below.
 import reflex as rx
 
+# Reuse the standing card for both podium and leaderboard rows.
 from .standing import standing
 
 
 def page_header(eyebrow: str, title: str, description: str) -> rx.Component:
+    """Build the eyebrow, title, and description at the top of a page.
+
+    Args:
+        eyebrow: Short uppercase label above the page title.
+        title: Main page heading.
+        description: Supporting sentence below the heading.
+
+    Returns:
+        A vertically stacked page header component.
+    """
+    # Group the small label, prominent title, and supporting description.
     return rx.vstack(
         rx.text(
             eyebrow,
@@ -40,8 +53,27 @@ def page_header(eyebrow: str, title: str, description: str) -> rx.Component:
 
 
 def podium_section(
-    entries: rx.Var, is_driver: bool
+    entries: rx.Var[list[dict[str, str]]], is_driver: bool
 ) -> rx.Component:
+    """Render the top three standings as featured podium cards.
+
+    Args:
+        entries: Reactive list of standings to display.
+        is_driver: Whether each entry contains driver details.
+
+    Returns:
+        A section heading followed by the featured standing cards.
+    """
+    # Give the podium a typed renderer so each reactive entry is explicit.
+    def render_podium_entry(entry: rx.Var[dict[str, str]]) -> rx.Component:
+        """Wrap one featured standing card with podium spacing."""
+        return rx.box(
+            standing(entry, is_driver=is_driver, featured=True),
+            width="100%",
+            padding="1",
+        )
+
+    # Pair the section label with one horizontally arranged card per entry.
     return rx.vstack(
         rx.hstack(
             rx.vstack(
@@ -62,11 +94,7 @@ def podium_section(
         rx.hstack(
             rx.foreach(
                 entries,
-                lambda entry: rx.box(
-                    standing(entry, is_driver=is_driver, featured=True),
-                    width="100%",
-                    padding="1",
-                ),
+                render_podium_entry,
             ),
             width="100%",
         ),
@@ -75,7 +103,25 @@ def podium_section(
     )
 
 
-def leaderboard_section(entries: rx.Var, is_driver: bool) -> rx.Component:
+def leaderboard_section(
+    entries: rx.Var[list[dict[str, str]]],
+    is_driver: bool,
+) -> rx.Component:
+    """Render the standings after the featured podium entries.
+
+    Args:
+        entries: Reactive list of standings to display as regular rows.
+        is_driver: Whether each entry contains driver details.
+
+    Returns:
+        A section heading followed by the remaining standings rows.
+    """
+    # Render each reactive entry using the regular, non-featured card layout.
+    def render_standing(entry: rx.Var[dict[str, str]]) -> rx.Component:
+        """Build one regular row in the standings leaderboard."""
+        return standing(entry, is_driver=is_driver)
+
+    # Keep the heading separate from the vertically stacked rows.
     return rx.vstack(
         rx.hstack(
             rx.vstack(
@@ -95,7 +141,7 @@ def leaderboard_section(entries: rx.Var, is_driver: bool) -> rx.Component:
         rx.vstack(
             rx.foreach(
                 entries,
-                lambda entry: standing(entry, is_driver=is_driver),
+                render_standing,
             ),
             align="stretch",
             spacing="2",
@@ -108,6 +154,12 @@ def leaderboard_section(entries: rx.Var, is_driver: bool) -> rx.Component:
 
 
 def loading_panel() -> rx.Component:
+    """Build a card that explains standings are currently loading.
+
+    Returns:
+        A centered loading indicator and status message.
+    """
+    # Center the spinner and its message inside a neutral panel.
     return rx.card(
         rx.vstack(
             rx.spinner(size="3"),
@@ -123,6 +175,15 @@ def loading_panel() -> rx.Component:
 
 
 def message_panel(message: rx.Var | str) -> rx.Component:
+    """Build a feedback card for an unavailable or empty standings result.
+
+    Args:
+        message: Static text or a reactive message to show to the user.
+
+    Returns:
+        A card with an icon, heading, and explanatory message.
+    """
+    # Pair a status icon with the heading and caller-supplied explanation.
     return rx.card(
         rx.hstack(
             rx.box(
