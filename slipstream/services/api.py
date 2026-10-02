@@ -2,10 +2,12 @@
 
 # Use Any for the raw response shape supplied by the external client.
 from datetime import date, datetime
+from functools import lru_cache
 from typing import Any
 
 # FastF1 provides the Ergast client used to retrieve standings.
 import fastf1
+import fastf1.plotting
 from fastf1.ergast import Ergast
 
 # Avoid reusing cached results when standings are requested.
@@ -144,6 +146,8 @@ def get_driver_standings(
         team_color: str = get_team_color(
             constructors,
             row.get("teamColor") or row.get("TeamColor"),
+            season=parse_integer(season),
+            round_number=parse_integer(round),
         )
         standings.append(
             {
@@ -188,7 +192,11 @@ def get_constructor_standings(
                 "position": format_value(row.get("position")),
                 "constructor": format_value(constructor.get("name")),
                 "points": format_value(row.get("points")),
-                "team_color": get_team_color([constructor]),
+                "team_color": get_team_color(
+                    [constructor],
+                    season=parse_integer(season),
+                    round_number=parse_integer(round),
+                ),
             }
         )
     return standings
@@ -197,12 +205,16 @@ def get_constructor_standings(
 def get_team_color(
     constructors: list[dict[str, Any]],
     api_color: object = None,
+    season: int | None = None,
+    round_number: int | None = None,
 ) -> str:
-    """Choose an API-provided team color or its configured fallback.
+    """Choose an API-provided, session-derived, or fallback team color.
 
     Args:
         constructors: Constructor records that may include a color or ID.
         api_color: Optional color supplied alongside the standings row.
+        season: Season for looking up the matching FastF1 race session.
+        round_number: Race round for looking up the matching session.
 
     Returns:
         A CSS hex color string.
@@ -225,7 +237,24 @@ def get_team_color(
                 if formatted_color.startswith("#")
                 else f"#{formatted_color}"
             )
-    # Fall back to the local palette when the API has no usable color.
+
+    # Use the season and round's official F1 timing feed when Ergast has no
+    # team color. FastF1's plotting helper reads the session's driver/team data.
+    if season is not None and round_number is not None:
+        for constructor in constructors:
+            for team_name in (
+                constructor.get("name"),
+                constructor.get("constructorId"),
+            ):
+                if not team_name:
+                    continue
+                dynamic_color: str = get_session_team_color(
+                    format_value(team_name), season, round_number
+                )
+                if dynamic_color:
+                    return dynamic_color
+
+    # Keep a local fallback for seasons without F1 timing data and API outages.
     for constructor in constructors:
         constructor_id: str = (
             format_value(constructor.get("constructorId")).lower()
@@ -234,6 +263,57 @@ def get_team_color(
             return TEAM_COLORS[constructor_id]
 
     return "#808080"
+
+
+@lru_cache(maxsize=32)
+def get_f1_session(season: int, round_number: int) -> Any | None:
+    """Return the cached FastF1 race session for dynamic team colors.
+
+    Timing data is available from 2018 onwards. Older seasons and unavailable
+    sessions use the local palette fallback instead.
+    """
+    if season < 2018:
+        return None
+    try:
+        return fastf1.get_session(
+            season,
+            round_number,
+            "R",
+            backend="f1timing",
+        )
+    except Exception:
+        # Color lookup must not make standings unavailable.
+        return None
+
+
+@lru_cache(maxsize=128)
+def get_session_team_color(
+    team_name: str,
+    season: int,
+    round_number: int,
+) -> str:
+    """Read a team's official color from the matching race's timing feed."""
+    session: Any | None = get_f1_session(season, round_number)
+    if session is None:
+        return ""
+    try:
+        color: str = fastf1.plotting.get_team_color(
+            team_name,
+            session,
+            colormap="official",
+        )
+    except Exception:
+        # Unknown names and missing timing data fall through to the palette.
+        return ""
+    return color if color.startswith("#") else ""
+
+
+def parse_integer(value: object) -> int | None:
+    """Return an integer for numeric season/round values, otherwise ``None``."""
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def format_value(value: object) -> str:
