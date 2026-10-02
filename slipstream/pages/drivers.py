@@ -9,21 +9,48 @@ import reflex as rx
 # Reuse shared presentation components and the driver standings service.
 from slipstream.components import container, navbar
 from slipstream.components.championship import (
+    championship_filters,
     leaderboard_section,
     loading_panel,
     message_panel,
     page_header,
     podium_section,
 )
-from slipstream.services import get_driver_standings
+from slipstream.services import (
+    get_available_seasons,
+    get_completed_races,
+    get_driver_standings,
+)
 
 
 class DriversState(rx.State):
     """Hold and derive the data shown on the driver championship page."""
 
     standings: list[dict[str, str]] = []
+    seasons: list[str] = []
+    selected_season: str = ""
+    races: list[dict[str, str]] = []
+    selected_round: str = ""
     loading: bool = False
     error: str = ""
+
+    @rx.var
+    def selected_round_label(self) -> str:
+        """Return the display label for the selected round."""
+        for race in self.races:
+            if race["round"] == self.selected_round:
+                return race["label"]
+        return "Choose a completed race"
+
+    @rx.var
+    def season_selector_disabled(self) -> bool:
+        """Disable season selection while loading or without season data."""
+        return self.loading or not self.seasons
+
+    @rx.var
+    def round_selector_disabled(self) -> bool:
+        """Disable race selection while loading or without race options."""
+        return self.loading or not self.races
 
     @rx.var
     def podium_standings(self) -> list[dict[str, str]]:
@@ -47,7 +74,7 @@ class DriversState(rx.State):
 
     @rx.event
     async def load_standings(self) -> AsyncGenerator[None, None]:
-        """Load driver standings and update the page's loading state.
+        """Load seasons, race options, and the latest driver standings.
 
         Yields:
             A state update after loading begins so the page can show its spinner.
@@ -58,15 +85,81 @@ class DriversState(rx.State):
         yield
         try:
             # Run the blocking API client call outside the event loop.
-            self.standings = await asyncio.to_thread(get_driver_standings)
+            self.seasons = await asyncio.to_thread(get_available_seasons)
+            if not self.seasons:
+                self.error = "No championship seasons are available yet."
+                return
+            self.selected_season = self.seasons[0]
+            self.races = await asyncio.to_thread(
+                get_completed_races, self.selected_season
+            )
+            if not self.races:
+                self.error = (
+                    f"No completed races are available for {self.selected_season}."
+                )
+                return
+            self.selected_round = self.races[-1]["round"]
+            self.standings = await asyncio.to_thread(
+                get_driver_standings,
+                int(self.selected_season),
+                int(self.selected_round),
+            )
             if not self.standings:
-                self.error = "No driver standings are available yet."
+                self.error = "No driver standings are available for this race."
         except Exception:
             # Keep the UI usable and show a short message if loading fails.
             self.standings = []
-            self.error = "Could not load driver standings. Please try again."
+            self.error = "Could not load driver championship data. Please try again."
         finally:
             # Clear the loading indicator on both success and failure.
+            self.loading = False
+
+    @rx.event
+    async def select_season(self, season: str) -> AsyncGenerator[None, None]:
+        """Load the latest completed race standings for a selected season."""
+        self.selected_season = season
+        self.races = []
+        self.selected_round = ""
+        self.standings = []
+        self.loading = True
+        self.error = ""
+        yield
+        try:
+            self.races = await asyncio.to_thread(get_completed_races, season)
+            if not self.races:
+                self.error = f"No completed races are available for {season}."
+                return
+            self.selected_round = self.races[-1]["round"]
+            self.standings = await asyncio.to_thread(
+                get_driver_standings, int(season), int(self.selected_round)
+            )
+            if not self.standings:
+                self.error = "No driver standings are available for this race."
+        except Exception:
+            self.standings = []
+            self.error = "Could not load driver championship data. Please try again."
+        finally:
+            self.loading = False
+
+    @rx.event
+    async def select_round(self, round_number: str) -> AsyncGenerator[None, None]:
+        """Load driver standings through the selected race round."""
+        self.selected_round = round_number
+        self.loading = True
+        self.error = ""
+        yield
+        try:
+            self.standings = await asyncio.to_thread(
+                get_driver_standings,
+                int(self.selected_season),
+                int(round_number),
+            )
+            if not self.standings:
+                self.error = "No driver standings are available for this race."
+        except Exception:
+            self.standings = []
+            self.error = "Could not load driver championship data. Please try again."
+        finally:
             self.loading = False
 
 
@@ -94,7 +187,18 @@ def drivers() -> rx.Component:
                 page_header(
                     "Driver championship",
                     "Drivers’ Championship",
-                    "Follow the drivers setting the pace across this season’s championship.",
+                    "Review driver standings for any season through a selected Grand Prix.",
+                ),
+                championship_filters(
+                    DriversState.seasons,
+                    DriversState.selected_season,
+                    DriversState.select_season,
+                    DriversState.races,
+                    DriversState.selected_round,
+                    DriversState.selected_round_label,
+                    DriversState.select_round,
+                    DriversState.season_selector_disabled,
+                    DriversState.round_selector_disabled,
                 ),
                 rx.cond(
                     DriversState.loading,

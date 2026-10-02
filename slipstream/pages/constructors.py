@@ -9,21 +9,48 @@ import reflex as rx
 # Reuse shared presentation components and the constructor standings service.
 from slipstream.components import container, navbar
 from slipstream.components.championship import (
+    championship_filters,
     leaderboard_section,
     loading_panel,
     message_panel,
     page_header,
     podium_section,
 )
-from slipstream.services import get_constructor_standings
+from slipstream.services import (
+    get_available_seasons,
+    get_completed_races,
+    get_constructor_standings,
+)
 
 
 class ConstructorsState(rx.State):
     """Hold and derive the data shown on the team championship page."""
 
     standings: list[dict[str, str]] = []
+    seasons: list[str] = []
+    selected_season: str = ""
+    races: list[dict[str, str]] = []
+    selected_round: str = ""
     loading: bool = False
     error: str = ""
+
+    @rx.var
+    def selected_round_label(self) -> str:
+        """Return the display label for the selected round."""
+        for race in self.races:
+            if race["round"] == self.selected_round:
+                return race["label"]
+        return "Choose a completed race"
+
+    @rx.var
+    def season_selector_disabled(self) -> bool:
+        """Disable season selection while loading or without season data."""
+        return self.loading or not self.seasons
+
+    @rx.var
+    def round_selector_disabled(self) -> bool:
+        """Disable race selection while loading or without race options."""
+        return self.loading or not self.races
 
     @rx.var
     def podium_standings(self) -> list[dict[str, str]]:
@@ -47,7 +74,7 @@ class ConstructorsState(rx.State):
 
     @rx.event
     async def load_standings(self) -> AsyncGenerator[None, None]:
-        """Load constructor standings and update the page's loading state.
+        """Load seasons, race options, and the latest constructor standings.
 
         Yields:
             A state update after loading begins so the page can show its spinner.
@@ -58,15 +85,89 @@ class ConstructorsState(rx.State):
         yield
         try:
             # Run the blocking API client call outside the event loop.
-            self.standings = await asyncio.to_thread(get_constructor_standings)
+            self.seasons = await asyncio.to_thread(get_available_seasons, 1958)
+            if not self.seasons:
+                self.error = "No championship seasons are available yet."
+                return
+            self.selected_season = self.seasons[0]
+            self.races = await asyncio.to_thread(
+                get_completed_races, self.selected_season
+            )
+            if not self.races:
+                self.error = (
+                    f"No completed races are available for {self.selected_season}."
+                )
+                return
+            self.selected_round = self.races[-1]["round"]
+            self.standings = await asyncio.to_thread(
+                get_constructor_standings,
+                int(self.selected_season),
+                int(self.selected_round),
+            )
             if not self.standings:
-                self.error = "No constructor standings are available yet."
+                self.error = "No constructor standings are available for this race."
         except Exception:
             # Keep the UI usable and show a short message if loading fails.
             self.standings = []
-            self.error = "Could not load constructor standings. Please try again."
+            self.error = (
+                "Could not load constructor championship data. Please try again."
+            )
         finally:
             # Clear the loading indicator on both success and failure.
+            self.loading = False
+
+    @rx.event
+    async def select_season(self, season: str) -> AsyncGenerator[None, None]:
+        """Load the latest completed race standings for a selected season."""
+        self.selected_season = season
+        self.races = []
+        self.selected_round = ""
+        self.standings = []
+        self.loading = True
+        self.error = ""
+        yield
+        try:
+            self.races = await asyncio.to_thread(get_completed_races, season)
+            if not self.races:
+                self.error = f"No completed races are available for {season}."
+                return
+            self.selected_round = self.races[-1]["round"]
+            self.standings = await asyncio.to_thread(
+                get_constructor_standings,
+                int(season),
+                int(self.selected_round),
+            )
+            if not self.standings:
+                self.error = "No constructor standings are available for this race."
+        except Exception:
+            self.standings = []
+            self.error = (
+                "Could not load constructor championship data. Please try again."
+            )
+        finally:
+            self.loading = False
+
+    @rx.event
+    async def select_round(self, round_number: str) -> AsyncGenerator[None, None]:
+        """Load constructor standings through the selected race round."""
+        self.selected_round = round_number
+        self.loading = True
+        self.error = ""
+        yield
+        try:
+            self.standings = await asyncio.to_thread(
+                get_constructor_standings,
+                int(self.selected_season),
+                int(round_number),
+            )
+            if not self.standings:
+                self.error = "No constructor standings are available for this race."
+        except Exception:
+            self.standings = []
+            self.error = (
+                "Could not load constructor championship data. Please try again."
+            )
+        finally:
             self.loading = False
 
 
@@ -96,7 +197,18 @@ def constructors() -> rx.Component:
                 page_header(
                     "Team championship",
                     "Teams’ Championship",
-                    "See how each team is shaping the constructors’ championship.",
+                    "Review team standings for any season through a selected Grand Prix.",
+                ),
+                championship_filters(
+                    ConstructorsState.seasons,
+                    ConstructorsState.selected_season,
+                    ConstructorsState.select_season,
+                    ConstructorsState.races,
+                    ConstructorsState.selected_round,
+                    ConstructorsState.selected_round_label,
+                    ConstructorsState.select_round,
+                    ConstructorsState.season_selector_disabled,
+                    ConstructorsState.round_selector_disabled,
                 ),
                 rx.cond(
                     ConstructorsState.loading,
