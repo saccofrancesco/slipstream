@@ -1,0 +1,1 @@
+"""Slipstream championship standings application."""
