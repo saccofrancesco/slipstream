@@ -1,16 +1,20 @@
-# Importing libraries
+"""Fetch and normalize Formula 1 championship standings."""
+
+# Use Any for the raw response shape supplied by the external client.
 from typing import Any
+
+# FastF1 provides the Ergast client used to retrieve standings.
 import fastf1
 from fastf1.ergast import Ergast
 
-# Disabling the cache for the queries
+# Avoid reusing cached results when standings are requested.
 fastf1.Cache.set_disabled()
 
-# Creating the Ergast instance for common API fetches
+# Reuse one Ergast client for both driver and constructor requests.
 ergast: Ergast = Ergast()
 
-# FastF1's 2026 official team palette, keyed by constructor IDs from the
-# standings response. The standings endpoint itself does not include colors.
+# Fallback colors keyed by constructor IDs in the standings response. The
+# endpoint does not consistently provide team colors.
 TEAM_COLORS: dict[str, str] = {
     "alpine": "#0093cc",
     "aston_martin": "#229971",
@@ -26,16 +30,26 @@ TEAM_COLORS: dict[str, str] = {
 }
 
 
-# Retrieve driver standings for a season and round, then flatten FastF1's raw
-# response into values that can be stored directly in Reflex state.
 def get_driver_standings(
     season: int | str = "current", round: int | str = "last"
 ) -> list[dict[str, str]]:
-    response = ergast.get_driver_standings(
+    """Fetch driver standings and convert them to Reflex-friendly values.
+
+    Args:
+        season: Season year or FastF1's ``"current"`` selector.
+        round: Round number or FastF1's ``"last"`` selector.
+
+    Returns:
+        Driver standing records with all values normalized to strings.
+    """
+    # Request the raw response so each returned row can be normalized here.
+    response: Any = ergast.get_driver_standings(
         season=season, round=round, result_type="raw"
     )
     if not response:
         return []
+
+    # Extract the raw rows and build the smaller shape consumed by the UI.
     rows: list[dict[str, Any]] = response[0].get("DriverStandings", [])
     standings: list[dict[str, str]] = []
     for row in rows:
@@ -64,16 +78,26 @@ def get_driver_standings(
     return standings
 
 
-# Retrieve team standings for a season and round, then flatten FastF1's raw
-# response into values that can be stored directly in Reflex state.
 def get_constructor_standings(
     season: int | str = "current", round: int | str = "last"
 ) -> list[dict[str, str]]:
-    response = ergast.get_constructor_standings(
+    """Fetch constructor standings and normalize them for the UI.
+
+    Args:
+        season: Season year or FastF1's ``"current"`` selector.
+        round: Round number or FastF1's ``"last"`` selector.
+
+    Returns:
+        Constructor standing records with all values normalized to strings.
+    """
+    # Request raw constructor rows and handle an empty response consistently.
+    response: Any = ergast.get_constructor_standings(
         season=season, round=round, result_type="raw"
     )
     if not response:
         return []
+
+    # Flatten each response row and attach the matching team color.
     rows: list[dict[str, Any]] = response[0].get("ConstructorStandings", [])
     standings: list[dict[str, str]] = []
     for row in rows:
@@ -89,9 +113,21 @@ def get_constructor_standings(
     return standings
 
 
-# Extract the color based on the driver team name from the above official mapping
-def get_team_color(constructors: list[dict[str, Any]], api_color: object = None) -> str:
-    api_colors: list[dict[str, Any]] | Any = [api_color]
+def get_team_color(
+    constructors: list[dict[str, Any]],
+    api_color: object = None,
+) -> str:
+    """Choose an API-provided team color or its configured fallback.
+
+    Args:
+        constructors: Constructor records that may include a color or ID.
+        api_color: Optional color supplied alongside the standings row.
+
+    Returns:
+        A CSS hex color string.
+    """
+    # Prefer colors supplied by the API, checking both known field spellings.
+    api_colors: list[object] = [api_color]
     for constructor in constructors:
         api_colors.extend(
             [
@@ -102,22 +138,33 @@ def get_team_color(constructors: list[dict[str, Any]], api_color: object = None)
         )
     for color in api_colors:
         if color:
-            formatted_color = format_value(color)
+            formatted_color: str = format_value(color)
             return (
                 formatted_color
                 if formatted_color.startswith("#")
                 else f"#{formatted_color}"
             )
+    # Fall back to the local palette when the API has no usable color.
     for constructor in constructors:
-        constructor_id = format_value(constructor.get("constructorId")).lower()
+        constructor_id: str = (
+            format_value(constructor.get("constructorId")).lower()
+        )
         if constructor_id in TEAM_COLORS:
             return TEAM_COLORS[constructor_id]
 
     return "#808080"
 
 
-# Format values before storing them in Reflex state.
 def format_value(value: object) -> str:
+    """Convert an API value to a display string without a trailing decimal.
+
+    Args:
+        value: Value returned by the standings API.
+
+    Returns:
+        An empty string for missing data, otherwise a normalized string.
+    """
+    # Keep absent values empty and remove the decimal from whole-number floats.
     if value is None:
         return ""
     return str(value).removesuffix(".0")
