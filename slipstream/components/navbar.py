@@ -75,6 +75,9 @@ def navbar(active_section: str | None = None) -> rx.Component:
                 ),
                 rx.hstack(
                     navbar_icon_item(
+                        "RESULTS", "flag", "/results", active_section == "results"
+                    ),
+                    navbar_icon_item(
                         "DRIVERS", "trophy", "/drivers", active_section == "drivers"
                     ),
                     navbar_icon_item(
