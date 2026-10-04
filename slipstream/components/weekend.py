@@ -1,4 +1,4 @@
-"""Components for the current race weekend overview."""
+"""Components for the current or upcoming race weekend overview."""
 
 import reflex as rx
 from slipstream.services import ScheduleDay, ScheduledSession
@@ -69,12 +69,12 @@ def _schedule_day_column(day: rx.Var[ScheduleDay]) -> rx.Component:
     )
 
 
-def current_weekend_card(
+def race_weekend_card(
     weekend: rx.Var[dict[str, str]],
     schedule_days: rx.Var[list[ScheduleDay]],
     schedule_column_count: rx.Var[str],
 ) -> rx.Component:
-    """Render the current event details and its schedule.
+    """Render the selected event details and its schedule.
 
     Args:
         weekend: Reactive event fields such as race and circuit names.
@@ -90,7 +90,11 @@ def current_weekend_card(
             rx.hstack(
                 rx.vstack(
                     rx.text(
-                        "CURRENT WEEKEND",
+                        rx.cond(
+                            weekend["status"] == "current",
+                            "CURRENT WEEKEND",
+                            "UPCOMING WEEKEND",
+                        ),
                         size="2",
                         weight="bold",
                         color=rx.color("accent", 11),
@@ -190,7 +194,7 @@ def weekend_status_card(title: str, message: rx.Var[str] | str) -> rx.Component:
         message: Static text or a reactive error message.
 
     Returns:
-        A status card matching the current weekend card's appearance.
+        A status card matching the race weekend card's appearance.
     """
     return rx.card(
         rx.hstack(
