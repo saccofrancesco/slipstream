@@ -1,34 +1,56 @@
-"""Current race weekend overview for the results page."""
+"""Current or upcoming race weekend overview for the results page."""
 
 import asyncio
 from collections.abc import AsyncGenerator
 
 import reflex as rx
 from slipstream.components import container, navbar, page_header
-from slipstream.components.weekend import current_weekend_card, weekend_status_card
+from slipstream.components.weekend import race_weekend_card, weekend_status_card
 from slipstream.services import (
-    CurrentRaceWeekend,
+    RaceWeekend,
     ScheduleDay,
-    get_current_race_weekend,
+    get_race_weekend,
 )
 
 
 class ResultsState(rx.State):
-    """Hold the current weekend, its schedule, and the request status.
+    """Hold the selected weekend, its schedule, and the request status.
 
     Scalar event details and schedule rows are stored separately so the card
     can render each schedule date with ``rx.foreach``.
     """
 
-    current_weekend: dict[str, str] = {}
+    race_weekend: dict[str, str] = {}
     schedule_days: list[ScheduleDay] = []
     loading: bool = True
     error: str = ""
 
     @rx.var
-    def has_current_weekend(self) -> bool:
-        """Report whether the calendar contains an in-progress weekend."""
-        return bool(self.current_weekend)
+    def has_race_weekend(self) -> bool:
+        """Report whether the calendar contains a current or future weekend."""
+        return bool(self.race_weekend)
+
+    @rx.var
+    def weekend_heading(self) -> str:
+        """Label the page for the selected weekend."""
+        if not self.race_weekend:
+            return "Race weekend"
+        return (
+            "Current race weekend"
+            if self.race_weekend["status"] == "current"
+            else "Upcoming race weekend"
+        )
+
+    @rx.var
+    def weekend_description(self) -> str:
+        """Describe the selected weekend without suggesting it is underway."""
+        if not self.race_weekend:
+            return "Explore the Formula 1 race calendar."
+        return (
+            "Follow the action from the current Formula 1 weekend."
+            if self.race_weekend["status"] == "current"
+            else "Get ready for the next Formula 1 weekend."
+        )
 
     @rx.var
     def schedule_column_count(self) -> str:
@@ -36,8 +58,8 @@ class ResultsState(rx.State):
         return str(max(len(self.schedule_days), 1))
 
     @rx.event
-    async def load_current_weekend(self) -> AsyncGenerator[None, None]:
-        """Fetch the current weekend and publish its display data.
+    async def load_race_weekend(self) -> AsyncGenerator[None, None]:
+        """Fetch the current or next weekend and publish its display data.
 
         Yields:
             A state update that shows the loading card before the API call.
@@ -46,19 +68,20 @@ class ResultsState(rx.State):
         # stale event details while the calendar request is in progress.
         self.loading = True
         self.error = ""
-        self.current_weekend = {}
+        self.race_weekend = {}
         self.schedule_days = []
         yield
         try:
             # The FastF1 client is synchronous; keep its request off the
             # Reflex event loop while retaining an async page-load event.
-            weekend: CurrentRaceWeekend | None = await asyncio.to_thread(
-                get_current_race_weekend
+            weekend: RaceWeekend | None = await asyncio.to_thread(
+                get_race_weekend
             )
             if weekend is not None:
                 # Keep the card's scalar values separate from its list of
                 # schedule rows, which has a different state type.
-                self.current_weekend = {
+                self.race_weekend = {
+                    "status": weekend["status"],
                     "round": weekend["round"],
                     "race_name": weekend["race_name"],
                     "circuit_name": weekend["circuit_name"],
@@ -68,16 +91,16 @@ class ResultsState(rx.State):
                 }
                 self.schedule_days = weekend["schedule_days"]
         except Exception:
-            self.current_weekend = {}
+            self.race_weekend = {}
             self.schedule_days = []
-            self.error = "Could not load the current race weekend. Please try again."
+            self.error = "Could not load the race schedule. Please try again."
         finally:
             self.loading = False
 
 
-@rx.page("/results", "Results", on_load=ResultsState.load_current_weekend)
+@rx.page("/results", "Results", on_load=ResultsState.load_race_weekend)
 def results() -> rx.Component:
-    """Render the current weekend or the appropriate request status.
+    """Render the current or next weekend, or the request status.
 
     Returns:
         The Results page with navigation, header, and weekend content.
@@ -87,9 +110,9 @@ def results() -> rx.Component:
         container(
             rx.vstack(
                 page_header(
-                    "Race weekend",
+                    ResultsState.weekend_heading,
                     "Results",
-                    "Follow the action from the current Formula 1 weekend.",
+                    ResultsState.weekend_description,
                 ),
                 # Resolve loading and errors before checking for an event;
                 # an empty result has its own explanatory status card.
@@ -104,15 +127,15 @@ def results() -> rx.Component:
                             "Weekend overview unavailable", ResultsState.error
                         ),
                         rx.cond(
-                            ResultsState.has_current_weekend,
-                            current_weekend_card(
-                                ResultsState.current_weekend,
+                            ResultsState.has_race_weekend,
+                            race_weekend_card(
+                                ResultsState.race_weekend,
                                 ResultsState.schedule_days,
                                 ResultsState.schedule_column_count,
                             ),
                             weekend_status_card(
-                                "No race weekend is underway",
-                                "The weekend overview will appear here once a Grand Prix weekend begins.",
+                                "No upcoming race is scheduled",
+                                "The next Grand Prix weekend will appear here when its calendar is published.",
                             ),
                         ),
                     ),
