@@ -2,6 +2,8 @@
 
 from .api import (
     CurrentRaceWeekend,
+    ScheduleDay,
+    ScheduledSession,
     get_available_seasons,
     get_completed_races,
     get_constructor_standings,
@@ -11,6 +13,8 @@ from .api import (
 
 __all__: list[str] = [
     "CurrentRaceWeekend",
+    "ScheduleDay",
+    "ScheduledSession",
     "get_available_seasons",
     "get_completed_races",
     "get_constructor_standings",
