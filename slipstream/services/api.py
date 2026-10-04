@@ -1,13 +1,13 @@
 """Fetch and normalize Formula 1 schedules and championship standings."""
 
-# Use Any for the raw response shape supplied by the external client.
 from datetime import date, datetime
 from functools import lru_cache
-from typing import Any
+from typing import Any, TypedDict
 
 # FastF1 provides the Ergast client used to retrieve calendars and standings.
 import fastf1
 import fastf1.plotting
+from fastf1.core import Session
 from fastf1.ergast import Ergast
 
 # Avoid reusing cached results when schedule or standings data is requested.
@@ -15,6 +15,18 @@ fastf1.Cache.set_disabled()
 
 # Reuse one Ergast client for schedule and standings requests.
 ergast: Ergast = Ergast()
+
+
+class CurrentRaceWeekend(TypedDict):
+    """Normalized event details and schedule rows consumed by ResultsState."""
+
+    round: str
+    race_name: str
+    circuit_name: str
+    locality: str
+    country: str
+    date_range: str
+    schedule_days: list[dict[str, str]]
 
 
 def get_available_seasons(start_year: int = 1950) -> list[str]:
@@ -26,10 +38,15 @@ def get_available_seasons(start_year: int = 1950) -> list[str]:
     Returns:
         Season years formatted as strings for the season selector.
     """
-    response: Any = ergast.get_seasons(result_type="raw", limit=1000)
+    # The raw Ergast response is a list of records; keep that boundary typed
+    # before extracting the small string-only shape used by page state.
+    response: list[dict[str, Any]] = ergast.get_seasons(
+        result_type="raw", limit=1000
+    )
     if not response:
         return []
 
+    # Deduplicate season values before presenting them newest first.
     seasons: set[str] = {
         format_value(row.get("season"))
         for row in response
@@ -47,7 +64,7 @@ def get_completed_races(season: int | str) -> list[dict[str, str]]:
     Returns:
         Race options with round numbers and display labels, in calendar order.
     """
-    response: Any = ergast.get_race_schedule(
+    response: list[dict[str, Any]] = ergast.get_race_schedule(
         season=int(season), result_type="raw", limit=1000
     )
     if not response:
@@ -60,7 +77,8 @@ def get_completed_races(season: int | str) -> list[dict[str, str]]:
         race_name: str = format_value(race.get("raceName"))
         race_date: date | None = parse_race_date(race.get("date"))
 
-        # Do not offer a future race as a standings snapshot.
+        # A standings snapshot is only selectable after race day. Leave races
+        # without a parseable date available, as the API cannot classify them.
         if not round_number or not race_name:
             continue
         if race_date is not None and race_date >= today:
@@ -76,7 +94,9 @@ def get_completed_races(season: int | str) -> list[dict[str, str]]:
     return sorted(races, key=lambda race: int(race["round"]))
 
 
-def get_current_race_weekend(today: date | None = None) -> dict[str, Any] | None:
+def get_current_race_weekend(
+    today: date | None = None,
+) -> CurrentRaceWeekend | None:
     """Return the current race weekend when today's date falls within it.
 
     The weekend begins on the date of its first scheduled session and ends on
@@ -90,12 +110,14 @@ def get_current_race_weekend(today: date | None = None) -> dict[str, Any] | None
         A display-ready event record, or ``None`` when no weekend is underway.
     """
     current_date: date = today or date.today()
-    response: Any = ergast.get_race_schedule(
+    response: list[dict[str, Any]] = ergast.get_race_schedule(
         season=current_date.year, result_type="raw", limit=1000
     )
     if not response:
         return None
 
+    # Sprint qualifying appears under two Ergast field names. Both map to one
+    # display label and are deduplicated when sessions are grouped by date.
     session_fields: tuple[tuple[str, str], ...] = (
         ("FirstPractice", "Practice 1"),
         ("SecondPractice", "Practice 2"),
@@ -110,9 +132,11 @@ def get_current_race_weekend(today: date | None = None) -> dict[str, Any] | None
         if race_date is None:
             continue
 
+        # First find the earliest scheduled session. A weekend is current only
+        # between that date and the race date, inclusive.
         session_dates: list[date] = []
         for field, _ in session_fields:
-            session: Any = race.get(field)
+            session: object = race.get(field)
             session_date_value: object = (
                 session.get("date") if isinstance(session, dict) else session
             )
@@ -133,13 +157,15 @@ def get_current_race_weekend(today: date | None = None) -> dict[str, Any] | None
 
         circuit: dict[str, Any] = race.get("Circuit") or {}
         location: dict[str, Any] = circuit.get("Location") or {}
+        # Build the display schedule only for the selected weekend. Group by
+        # date, deduplicate sprint labels, then sort the dates below.
         sessions_by_date: dict[date, list[str]] = {}
         for field, session_name in session_fields:
-            session: Any = race.get(field)
+            session: object = race.get(field)
             session_date_value: object = (
                 session.get("date") if isinstance(session, dict) else session
             )
-            session_date = parse_race_date(session_date_value)
+            session_date: date | None = parse_race_date(session_date_value)
             if session_date is None or not start_date <= session_date <= race_date:
                 continue
 
@@ -149,6 +175,8 @@ def get_current_race_weekend(today: date | None = None) -> dict[str, Any] | None
 
         # The race is a scheduled session stored in the top-level race date.
         sessions_by_date.setdefault(race_date, []).append("Race")
+        # Reflex receives plain strings for each day, including line breaks
+        # between sessions that the card renders with white-space: pre-line.
         schedule_days: list[dict[str, str]] = [
             {
                 "day": session_date.strftime("%A").upper(),
@@ -188,6 +216,7 @@ def parse_race_date(value: object) -> date | None:
         return value
     if isinstance(value, str):
         try:
+            # Ergast may provide a full timestamp; only the ISO date matters.
             return date.fromisoformat(value[:10])
         except ValueError:
             return None
@@ -223,7 +252,7 @@ def get_driver_standings(
         Driver standing records with all values normalized to strings.
     """
     # Request the raw response so each returned row can be normalized here.
-    response: Any = ergast.get_driver_standings(
+    response: list[dict[str, Any]] = ergast.get_driver_standings(
         season=season, round=round, result_type="raw"
     )
     if not response:
@@ -273,7 +302,7 @@ def get_constructor_standings(
         Constructor standing records with all values normalized to strings.
     """
     # Request raw constructor rows and handle an empty response consistently.
-    response: Any = ergast.get_constructor_standings(
+    response: list[dict[str, Any]] = ergast.get_constructor_standings(
         season=season, round=round, result_type="raw"
     )
     if not response:
@@ -363,11 +392,18 @@ def get_team_color(
 
 
 @lru_cache(maxsize=32)
-def get_f1_session(season: int, round_number: int) -> Any | None:
+def get_f1_session(season: int, round_number: int) -> Session | None:
     """Return the cached FastF1 race session for dynamic team colors.
 
     Timing data is available from 2018 onwards. Older seasons and unavailable
     sessions use the local palette fallback instead.
+
+    Args:
+        season: Championship season to look up.
+        round_number: Race round in that season.
+
+    Returns:
+        The race session, or ``None`` if timing data cannot be used.
     """
     if season < 2018:
         return None
@@ -389,8 +425,17 @@ def get_session_team_color(
     season: int,
     round_number: int,
 ) -> str:
-    """Read a team's official color from the matching race's timing feed."""
-    session: Any | None = get_f1_session(season, round_number)
+    """Read a team's official color from the matching race's timing feed.
+
+    Args:
+        team_name: Constructor name or ID to match in the session.
+        season: Championship season to look up.
+        round_number: Race round in that season.
+
+    Returns:
+        A CSS hex color, or an empty string when the lookup fails.
+    """
+    session: Session | None = get_f1_session(season, round_number)
     if session is None:
         return ""
     try:
@@ -406,7 +451,14 @@ def get_session_team_color(
 
 
 def parse_integer(value: object) -> int | None:
-    """Return an integer for numeric season/round values, otherwise ``None``."""
+    """Parse a season or round only when it contains a numeric value.
+
+    Args:
+        value: A season or round selector, including ``"current"`` or ``"last"``.
+
+    Returns:
+        The parsed integer, or ``None`` for a nonnumeric selector.
+    """
     try:
         return int(value) if value is not None else None
     except (TypeError, ValueError):
