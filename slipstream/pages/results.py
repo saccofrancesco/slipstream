@@ -6,7 +6,11 @@ from collections.abc import AsyncGenerator
 import reflex as rx
 from slipstream.components import container, navbar, page_header
 from slipstream.components.weekend import current_weekend_card, weekend_status_card
-from slipstream.services import CurrentRaceWeekend, get_current_race_weekend
+from slipstream.services import (
+    CurrentRaceWeekend,
+    ScheduleDay,
+    get_current_race_weekend,
+)
 
 
 class ResultsState(rx.State):
@@ -17,7 +21,7 @@ class ResultsState(rx.State):
     """
 
     current_weekend: dict[str, str] = {}
-    schedule_days: list[dict[str, str]] = []
+    schedule_days: list[ScheduleDay] = []
     loading: bool = True
     error: str = ""
 
