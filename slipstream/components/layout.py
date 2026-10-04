@@ -16,7 +16,9 @@ def container(*children: rx.Component) -> rx.Component:
     return rx.container(*children, size="4", width="100%", margin_x="auto")
 
 
-def page_header(eyebrow: str, title: str, description: str) -> rx.Component:
+def page_header(
+    eyebrow: str | rx.Var[str], title: str, description: str | rx.Var[str]
+) -> rx.Component:
     """Build the eyebrow, title, and description at the top of a page.
 
     Args:
