@@ -32,9 +32,10 @@ class ScheduleDay(TypedDict):
     sessions: list[ScheduledSession]
 
 
-class CurrentRaceWeekend(TypedDict):
+class RaceWeekend(TypedDict):
     """Normalized event details and schedule rows consumed by ResultsState."""
 
+    status: str
     round: str
     race_name: str
     circuit_name: str
@@ -109,28 +110,23 @@ def get_completed_races(season: int | str) -> list[dict[str, str]]:
     return sorted(races, key=lambda race: int(race["round"]))
 
 
-def get_current_race_weekend(
+def get_race_weekend(
     today: date | None = None,
-) -> CurrentRaceWeekend | None:
-    """Return the current race weekend when today's date falls within it.
+) -> RaceWeekend | None:
+    """Return the current race weekend, or the next scheduled one.
 
     The weekend begins on the date of its first scheduled session and ends on
-    race day. Future weekends and events whose session dates are unavailable
-    are not returned.
+    race day. When no weekend is underway, use the earliest future event in
+    this season or the next published season. Events without session dates use
+    race day as their start date.
 
     Args:
         today: Date to check, defaulting to the server's local date.
 
     Returns:
-        A display-ready event record, or ``None`` when no weekend is underway.
+        A display-ready event record, or ``None`` when no event is scheduled.
     """
     current_date: date = today or date.today()
-    response: list[dict[str, Any]] = ergast.get_race_schedule(
-        season=current_date.year, result_type="raw", limit=1000
-    )
-    if not response:
-        return None
-
     # Sprint qualifying appears under two Ergast field names. Both map to one
     # display label and are deduplicated when sessions are grouped by date.
     session_fields: tuple[tuple[str, str], ...] = (
@@ -142,93 +138,113 @@ def get_current_race_weekend(
         ("Sprint", "Sprint"),
         ("Qualifying", "Qualifying"),
     )
-    for race in response:
-        race_date: date | None = parse_race_date(race.get("date"))
-        if race_date is None:
-            continue
-
-        # First find the earliest scheduled session. A weekend is current only
-        # between that date and the race date, inclusive.
-        session_dates: list[date] = []
-        for field, _ in session_fields:
-            session: object = race.get(field)
-            session_date_value: object = (
-                session.get("date") if isinstance(session, dict) else session
-            )
-            session_date: date | None = parse_race_date(session_date_value)
-            if session_date is not None:
-                session_dates.append(session_date)
-        if not session_dates:
-            continue
-
-        start_date: date = min(session_dates)
-        if not start_date <= current_date <= race_date:
-            continue
-
-        round_number: str = format_value(race.get("round"))
-        race_name: str = format_value(race.get("raceName"))
-        if not round_number or not race_name:
-            continue
-
-        circuit: dict[str, Any] = race.get("Circuit") or {}
-        location: dict[str, Any] = circuit.get("Location") or {}
-        # Build the display schedule only for the selected weekend. Keep each
-        # session's start time with its name so the card can align them.
-        sessions_by_date: dict[date, dict[str, ScheduledSession]] = {}
-        for field, session_name in session_fields:
-            session: object = race.get(field)
-            session_date_value: object = (
-                session.get("date") if isinstance(session, dict) else session
-            )
-            session_date: date | None = parse_race_date(session_date_value)
-            if session_date is None or not start_date <= session_date <= race_date:
+    selected: tuple[date, date, dict[str, Any]] | None = None
+    status = ""
+    for season in (current_date.year, current_date.year + 1):
+        response: list[dict[str, Any]] = ergast.get_race_schedule(
+            season=season, result_type="raw", limit=1000
+        )
+        current_events: list[tuple[date, date, dict[str, Any]]] = []
+        future_events: list[tuple[date, date, dict[str, Any]]] = []
+        for race in response:
+            race_date = parse_race_date(race.get("date"))
+            if race_date is None or race_date < current_date:
                 continue
 
-            day_sessions = sessions_by_date.setdefault(session_date, {})
-            session_time = format_session_time(
-                session.get("time") if isinstance(session, dict) else None
-            )
-            # Sprint qualifying may be present under both API field names.
-            # Prefer the entry with a known time if only one provides it.
-            if session_name not in day_sessions or (
-                day_sessions[session_name]["time"] == "TBD"
-                and session_time != "TBD"
+            if not format_value(race.get("round")) or not format_value(
+                race.get("raceName")
             ):
-                day_sessions[session_name] = {
-                    "name": session_name,
-                    "time": session_time,
-                }
+                continue
 
-        # The race's date and time are stored at the top level of the record.
-        sessions_by_date.setdefault(race_date, {})["Race"] = {
-            "name": "Race",
-            "time": format_session_time(race.get("time")),
-        }
-        schedule_days: list[ScheduleDay] = [
-            {
-                "day": session_date.strftime("%A").upper(),
-                "date": f"{session_date.day} {session_date.strftime('%b')}",
-                "sessions": sorted(
-                    day_sessions.values(),
-                    key=lambda session: (session["time"] == "TBD", session["time"]),
-                ),
+            session_dates: list[date] = []
+            for field, _ in session_fields:
+                session: object = race.get(field)
+                session_date_value: object = (
+                    session.get("date") if isinstance(session, dict) else session
+                )
+                session_date = parse_race_date(session_date_value)
+                if session_date is not None and session_date <= race_date:
+                    session_dates.append(session_date)
+            start_date = min(session_dates, default=race_date)
+            event = (start_date, race_date, race)
+            if start_date <= current_date <= race_date:
+                current_events.append(event)
+            elif start_date > current_date:
+                future_events.append(event)
+
+        if current_events:
+            selected = min(current_events, key=lambda event: event[1])
+            status = "current"
+            break
+        if future_events:
+            selected = min(future_events, key=lambda event: event[0])
+            status = "upcoming"
+            break
+
+    if selected is None:
+        return None
+
+    start_date, race_date, race = selected
+    round_number = format_value(race.get("round"))
+    race_name = format_value(race.get("raceName"))
+    circuit: dict[str, Any] = race.get("Circuit") or {}
+    location: dict[str, Any] = circuit.get("Location") or {}
+    # Build the display schedule only for the selected weekend. Keep each
+    # session's start time with its name so the card can align them.
+    sessions_by_date: dict[date, dict[str, ScheduledSession]] = {}
+    for field, session_name in session_fields:
+        session: object = race.get(field)
+        session_date_value: object = (
+            session.get("date") if isinstance(session, dict) else session
+        )
+        session_date: date | None = parse_race_date(session_date_value)
+        if session_date is None or not start_date <= session_date <= race_date:
+            continue
+
+        day_sessions = sessions_by_date.setdefault(session_date, {})
+        session_time = format_session_time(
+            session.get("time") if isinstance(session, dict) else None
+        )
+        # Sprint qualifying may be present under both API field names.
+        # Prefer the entry with a known time if only one provides it.
+        if session_name not in day_sessions or (
+            day_sessions[session_name]["time"] == "TBD"
+            and session_time != "TBD"
+        ):
+            day_sessions[session_name] = {
+                "name": session_name,
+                "time": session_time,
             }
-            for session_date, day_sessions in sorted(sessions_by_date.items())
-        ]
-        return {
-            "round": round_number,
-            "race_name": race_name,
-            "circuit_name": format_value(circuit.get("circuitName")),
-            "locality": format_value(location.get("locality")),
-            "country": format_value(location.get("country")),
-            "schedule_days": schedule_days,
-            "date_range": (
-                f"{start_date.strftime('%d %b')} – "
-                f"{race_date.strftime('%d %b %Y')}"
+
+    # The race's date and time are stored at the top level of the record.
+    sessions_by_date.setdefault(race_date, {})["Race"] = {
+        "name": "Race",
+        "time": format_session_time(race.get("time")),
+    }
+    schedule_days: list[ScheduleDay] = [
+        {
+            "day": session_date.strftime("%A").upper(),
+            "date": f"{session_date.day} {session_date.strftime('%b')}",
+            "sessions": sorted(
+                day_sessions.values(),
+                key=lambda session: (session["time"] == "TBD", session["time"]),
             ),
         }
-
-    return None
+        for session_date, day_sessions in sorted(sessions_by_date.items())
+    ]
+    return {
+        "status": status,
+        "round": round_number,
+        "race_name": race_name,
+        "circuit_name": format_value(circuit.get("circuitName")),
+        "locality": format_value(location.get("locality")),
+        "country": format_value(location.get("country")),
+        "schedule_days": schedule_days,
+        "date_range": (
+            f"{start_date.strftime('%d %b')} – "
+            f"{race_date.strftime('%d %b %Y')}"
+        ),
+    }
 
 
 def parse_race_date(value: object) -> date | None:
