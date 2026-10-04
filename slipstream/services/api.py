@@ -1,6 +1,6 @@
 """Fetch and normalize Formula 1 schedules and championship standings."""
 
-from datetime import date, datetime
+from datetime import date, datetime, time, timezone
 from functools import lru_cache
 from typing import Any, TypedDict
 
@@ -17,6 +17,21 @@ fastf1.Cache.set_disabled()
 ergast: Ergast = Ergast()
 
 
+class ScheduledSession(TypedDict):
+    """One session and its published UTC start time."""
+
+    name: str
+    time: str
+
+
+class ScheduleDay(TypedDict):
+    """Sessions grouped under one UTC calendar date."""
+
+    day: str
+    date: str
+    sessions: list[ScheduledSession]
+
+
 class CurrentRaceWeekend(TypedDict):
     """Normalized event details and schedule rows consumed by ResultsState."""
 
@@ -26,7 +41,7 @@ class CurrentRaceWeekend(TypedDict):
     locality: str
     country: str
     date_range: str
-    schedule_days: list[dict[str, str]]
+    schedule_days: list[ScheduleDay]
 
 
 def get_available_seasons(start_year: int = 1950) -> list[str]:
@@ -157,9 +172,9 @@ def get_current_race_weekend(
 
         circuit: dict[str, Any] = race.get("Circuit") or {}
         location: dict[str, Any] = circuit.get("Location") or {}
-        # Build the display schedule only for the selected weekend. Group by
-        # date, deduplicate sprint labels, then sort the dates below.
-        sessions_by_date: dict[date, list[str]] = {}
+        # Build the display schedule only for the selected weekend. Keep each
+        # session's start time with its name so the card can align them.
+        sessions_by_date: dict[date, dict[str, ScheduledSession]] = {}
         for field, session_name in session_fields:
             session: object = race.get(field)
             session_date_value: object = (
@@ -169,19 +184,34 @@ def get_current_race_weekend(
             if session_date is None or not start_date <= session_date <= race_date:
                 continue
 
-            day_sessions: list[str] = sessions_by_date.setdefault(session_date, [])
-            if session_name not in day_sessions:
-                day_sessions.append(session_name)
+            day_sessions = sessions_by_date.setdefault(session_date, {})
+            session_time = format_session_time(
+                session.get("time") if isinstance(session, dict) else None
+            )
+            # Sprint qualifying may be present under both API field names.
+            # Prefer the entry with a known time if only one provides it.
+            if session_name not in day_sessions or (
+                day_sessions[session_name]["time"] == "TBD"
+                and session_time != "TBD"
+            ):
+                day_sessions[session_name] = {
+                    "name": session_name,
+                    "time": session_time,
+                }
 
-        # The race is a scheduled session stored in the top-level race date.
-        sessions_by_date.setdefault(race_date, []).append("Race")
-        # Reflex receives plain strings for each day, including line breaks
-        # between sessions that the card renders with white-space: pre-line.
-        schedule_days: list[dict[str, str]] = [
+        # The race's date and time are stored at the top level of the record.
+        sessions_by_date.setdefault(race_date, {})["Race"] = {
+            "name": "Race",
+            "time": format_session_time(race.get("time")),
+        }
+        schedule_days: list[ScheduleDay] = [
             {
                 "day": session_date.strftime("%A").upper(),
                 "date": f"{session_date.day} {session_date.strftime('%b')}",
-                "sessions": "\n".join(day_sessions),
+                "sessions": sorted(
+                    day_sessions.values(),
+                    key=lambda session: (session["time"] == "TBD", session["time"]),
+                ),
             }
             for session_date, day_sessions in sorted(sessions_by_date.items())
         ]
@@ -221,6 +251,30 @@ def parse_race_date(value: object) -> date | None:
         except ValueError:
             return None
     return None
+
+
+def format_session_time(value: object) -> str:
+    """Format a published Ergast start time as HH:MM UTC, or TBD."""
+    if isinstance(value, datetime):
+        return (
+            value.astimezone(timezone.utc) if value.tzinfo is not None else value
+        ).strftime("%H:%M")
+    if isinstance(value, time):
+        parsed_time = value
+    elif isinstance(value, str):
+        try:
+            parsed_time = time.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return "TBD"
+    else:
+        return "TBD"
+
+    if parsed_time.tzinfo is not None:
+        parsed_time = datetime.combine(date(2000, 1, 1), parsed_time).astimezone(
+            timezone.utc
+        ).time()
+    return parsed_time.strftime("%H:%M")
+
 
 # Fallback colors keyed by constructor IDs in the standings response. The
 # endpoint does not consistently provide team colors.
