@@ -4,7 +4,14 @@ import reflex as rx
 
 
 def _schedule_day_column(day: rx.Var[dict[str, str]]) -> rx.Component:
-    """Render one date and its scheduled sessions inside the weekend card."""
+    """Render one date and its sessions inside the weekend card.
+
+    Args:
+        day: Reactive row containing the day label, date, and session names.
+
+    Returns:
+        A card for one scheduled day.
+    """
     return rx.card(
         rx.vstack(
             rx.text(
@@ -42,9 +49,19 @@ def current_weekend_card(
     schedule_days: rx.Var[list[dict[str, str]]],
     schedule_column_count: rx.Var[str],
 ) -> rx.Component:
-    """Render the event, circuit, location, and calendar range in a card."""
+    """Render the current event details and its schedule.
+
+    Args:
+        weekend: Reactive event fields such as race and circuit names.
+        schedule_days: Reactive schedule rows, one for each event date.
+        schedule_column_count: Reactive number of grid columns as a string.
+
+    Returns:
+        A card with the event identity, venue, dates, and sessions.
+    """
     return rx.card(
         rx.vstack(
+            # Bind the header to the reactive fields updated by ResultsState.
             rx.hstack(
                 rx.vstack(
                     rx.text(
@@ -100,6 +117,8 @@ def current_weekend_card(
                 width="100%",
             ),
             rx.separator(),
+            # rx.foreach renders one card for each reactive schedule row; the
+            # state-derived column count controls how those cards form a grid.
             rx.vstack(
                 rx.text(
                     "EVENT SCHEDULE",
@@ -130,8 +149,16 @@ def current_weekend_card(
     )
 
 
-def weekend_status_card(title: str, message: rx.Var | str) -> rx.Component:
-    """Render loading, empty, or error feedback in the shared card style."""
+def weekend_status_card(title: str, message: rx.Var[str] | str) -> rx.Component:
+    """Render loading, empty, or error feedback in the shared card style.
+
+    Args:
+        title: Heading for the current request status.
+        message: Static text or a reactive error message.
+
+    Returns:
+        A status card matching the current weekend card's appearance.
+    """
     return rx.card(
         rx.hstack(
             rx.box(

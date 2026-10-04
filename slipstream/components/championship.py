@@ -36,7 +36,14 @@ def championship_filters(
     """
 
     def render_race_option(race: rx.Var[dict[str, str]]) -> rx.Component:
-        """Render one race option with its numeric round as the value."""
+        """Render a race label while keeping its round as the option value.
+
+        Args:
+            race: Reactive completed-race option.
+
+        Returns:
+            A select item that reports the race round on change.
+        """
         return rx.select.item(race["label"], value=race["round"])
 
     return rx.card(
@@ -110,7 +117,14 @@ def podium_section(
     """
     # Give the podium a typed renderer so each reactive entry is explicit.
     def render_podium_entry(entry: rx.Var[dict[str, str]]) -> rx.Component:
-        """Wrap one featured standing card with podium spacing."""
+        """Wrap one featured standing card with podium spacing.
+
+        Args:
+            entry: Reactive driver or constructor standing.
+
+        Returns:
+            A padded podium card for this entry.
+        """
         return rx.box(
             standing(entry, is_driver=is_driver, featured=True),
             width="100%",
@@ -162,7 +176,14 @@ def leaderboard_section(
     """
     # Render each reactive entry using the regular, non-featured card layout.
     def render_standing(entry: rx.Var[dict[str, str]]) -> rx.Component:
-        """Build one regular row in the standings leaderboard."""
+        """Build one regular row in the standings leaderboard.
+
+        Args:
+            entry: Reactive driver or constructor standing.
+
+        Returns:
+            A nonfeatured standing card for this entry.
+        """
         return standing(entry, is_driver=is_driver)
 
     # Keep the heading separate from the vertically stacked rows.
@@ -218,7 +239,7 @@ def loading_panel() -> rx.Component:
     )
 
 
-def message_panel(message: rx.Var | str) -> rx.Component:
+def message_panel(message: rx.Var[str] | str) -> rx.Component:
     """Build a feedback card for an unavailable or empty standings result.
 
     Args:

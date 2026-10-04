@@ -1,4 +1,4 @@
-"""Export reusable components for use across the application."""
+"""Export shared components; page-specific UI lives in component submodules."""
 
 from .layout import container, page_header
 from .navbar import navbar
