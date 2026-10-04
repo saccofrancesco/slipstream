@@ -23,7 +23,11 @@ from slipstream.services import (
 
 
 class DriversState(rx.State):
-    """Hold and derive the data shown on the driver championship page."""
+    """Hold driver standings and the season and round used to fetch them.
+
+    Selection events refresh the dependent options and standings; computed
+    vars provide the labels and subsets consumed by the page components.
+    """
 
     standings: list[dict[str, str]] = []
     seasons: list[str] = []
@@ -89,6 +93,7 @@ class DriversState(rx.State):
                 self.error = "No championship seasons are available yet."
                 return
             self.selected_season = self.seasons[0]
+            # The newest completed round is the initial standings snapshot.
             self.races = await asyncio.to_thread(
                 get_completed_races, self.selected_season
             )
@@ -115,7 +120,15 @@ class DriversState(rx.State):
 
     @rx.event
     async def select_season(self, season: str) -> AsyncGenerator[None, None]:
-        """Load the latest completed race standings for a selected season."""
+        """Load the latest completed race standings for a selected season.
+
+        Args:
+            season: Season selected in the page filter.
+
+        Yields:
+            A state update that clears the previous season's race options.
+        """
+        # A season change invalidates both the selected round and standings.
         self.selected_season = season
         self.races = []
         self.selected_round = ""
@@ -142,7 +155,14 @@ class DriversState(rx.State):
 
     @rx.event
     async def select_round(self, round_number: str) -> AsyncGenerator[None, None]:
-        """Load driver standings through the selected race round."""
+        """Load driver standings through the selected race round.
+
+        Args:
+            round_number: Completed race round selected in the page filter.
+
+        Yields:
+            A state update that shows the loading panel for this round.
+        """
         self.selected_round = round_number
         self.loading = True
         self.error = ""
@@ -164,7 +184,11 @@ class DriversState(rx.State):
 
 @rx.page("/drivers", "Drivers", on_load=DriversState.load_standings)
 def drivers() -> rx.Component:
-    """Render the driver championship page."""
+    """Render the driver championship page.
+
+    Returns:
+        A page with filters and the selected driver standings snapshot.
+    """
     # Combine the podium and remaining rows into one content column.
     standings_content: rx.Component = rx.vstack(
         podium_section(DriversState.podium_standings, is_driver=True),
@@ -199,6 +223,8 @@ def drivers() -> rx.Component:
                     DriversState.season_selector_disabled,
                     DriversState.round_selector_disabled,
                 ),
+                # Show loading and errors before deciding whether standings
+                # are available for the currently selected race.
                 rx.cond(
                     DriversState.loading,
                     loading_panel(),

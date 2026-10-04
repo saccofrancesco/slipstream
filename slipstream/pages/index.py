@@ -9,7 +9,11 @@ from slipstream.components import container, navbar
 
 @rx.page("/", "Home")
 def index() -> rx.Component:
-    """Render the landing page and its welcome heading."""
+    """Render the landing page and its welcome heading.
+
+    Returns:
+        The home page with shared navigation and centered welcome text.
+    """
     return rx.vstack(
         navbar(),
         container(

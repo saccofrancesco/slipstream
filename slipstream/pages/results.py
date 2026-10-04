@@ -2,16 +2,19 @@
 
 import asyncio
 from collections.abc import AsyncGenerator
-from typing import Any
 
 import reflex as rx
 from slipstream.components import container, navbar, page_header
 from slipstream.components.weekend import current_weekend_card, weekend_status_card
-from slipstream.services import get_current_race_weekend
+from slipstream.services import CurrentRaceWeekend, get_current_race_weekend
 
 
 class ResultsState(rx.State):
-    """Load and expose the race weekend currently underway."""
+    """Hold the current weekend, its schedule, and the request status.
+
+    Scalar event details and schedule rows are stored separately so the card
+    can render each schedule date with ``rx.foreach``.
+    """
 
     current_weekend: dict[str, str] = {}
     schedule_days: list[dict[str, str]] = []
@@ -25,32 +28,39 @@ class ResultsState(rx.State):
 
     @rx.var
     def schedule_column_count(self) -> str:
-        """Set one grid column for each date with a scheduled session."""
+        """Give the schedule grid one column per date, with one as a minimum."""
         return str(max(len(self.schedule_days), 1))
 
     @rx.event
     async def load_current_weekend(self) -> AsyncGenerator[None, None]:
-        """Fetch the schedule and select an event only within its date range."""
+        """Fetch the current weekend and publish its display data.
+
+        Yields:
+            A state update that shows the loading card before the API call.
+        """
+        # Clear the previous result before yielding so a reload cannot show
+        # stale event details while the calendar request is in progress.
         self.loading = True
         self.error = ""
         self.current_weekend = {}
         self.schedule_days = []
         yield
         try:
-            weekend: dict[str, Any] | None = await asyncio.to_thread(
+            # The FastF1 client is synchronous; keep its request off the
+            # Reflex event loop while retaining an async page-load event.
+            weekend: CurrentRaceWeekend | None = await asyncio.to_thread(
                 get_current_race_weekend
             )
             if weekend is not None:
+                # Keep the card's scalar values separate from its list of
+                # schedule rows, which has a different state type.
                 self.current_weekend = {
-                    key: weekend[key]
-                    for key in (
-                        "round",
-                        "race_name",
-                        "circuit_name",
-                        "locality",
-                        "country",
-                        "date_range",
-                    )
+                    "round": weekend["round"],
+                    "race_name": weekend["race_name"],
+                    "circuit_name": weekend["circuit_name"],
+                    "locality": weekend["locality"],
+                    "country": weekend["country"],
+                    "date_range": weekend["date_range"],
                 }
                 self.schedule_days = weekend["schedule_days"]
         except Exception:
@@ -63,7 +73,11 @@ class ResultsState(rx.State):
 
 @rx.page("/results", "Results", on_load=ResultsState.load_current_weekend)
 def results() -> rx.Component:
-    """Render a weekend overview when today's date falls within its dates."""
+    """Render the current weekend or the appropriate request status.
+
+    Returns:
+        The Results page with navigation, header, and weekend content.
+    """
     return rx.vstack(
         navbar(active_section="results"),
         container(
@@ -73,6 +87,8 @@ def results() -> rx.Component:
                     "Results",
                     "Follow the action from the current Formula 1 weekend.",
                 ),
+                # Resolve loading and errors before checking for an event;
+                # an empty result has its own explanatory status card.
                 rx.cond(
                     ResultsState.loading,
                     weekend_status_card(

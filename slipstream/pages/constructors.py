@@ -23,7 +23,11 @@ from slipstream.services import (
 
 
 class ConstructorsState(rx.State):
-    """Hold and derive the data shown on the team championship page."""
+    """Hold team standings and the season and round used to fetch them.
+
+    Selection events refresh the dependent options and standings; computed
+    vars provide the labels and subsets consumed by the page components.
+    """
 
     standings: list[dict[str, str]] = []
     seasons: list[str] = []
@@ -89,6 +93,7 @@ class ConstructorsState(rx.State):
                 self.error = "No championship seasons are available yet."
                 return
             self.selected_season = self.seasons[0]
+            # The newest completed round is the initial standings snapshot.
             self.races = await asyncio.to_thread(
                 get_completed_races, self.selected_season
             )
@@ -117,7 +122,15 @@ class ConstructorsState(rx.State):
 
     @rx.event
     async def select_season(self, season: str) -> AsyncGenerator[None, None]:
-        """Load the latest completed race standings for a selected season."""
+        """Load the latest completed race standings for a selected season.
+
+        Args:
+            season: Season selected in the page filter.
+
+        Yields:
+            A state update that clears the previous season's race options.
+        """
+        # A season change invalidates both the selected round and standings.
         self.selected_season = season
         self.races = []
         self.selected_round = ""
@@ -148,7 +161,14 @@ class ConstructorsState(rx.State):
 
     @rx.event
     async def select_round(self, round_number: str) -> AsyncGenerator[None, None]:
-        """Load constructor standings through the selected race round."""
+        """Load constructor standings through the selected race round.
+
+        Args:
+            round_number: Completed race round selected in the page filter.
+
+        Yields:
+            A state update that shows the loading panel for this round.
+        """
         self.selected_round = round_number
         self.loading = True
         self.error = ""
@@ -172,7 +192,11 @@ class ConstructorsState(rx.State):
 
 @rx.page("/constructors", "Teams", on_load=ConstructorsState.load_standings)
 def constructors() -> rx.Component:
-    """Render the team championship page."""
+    """Render the team championship page.
+
+    Returns:
+        A page with filters and the selected team standings snapshot.
+    """
     # Combine the podium and remaining rows into one content column.
     standings_content: rx.Component = rx.vstack(
         podium_section(ConstructorsState.podium_standings, is_driver=False),
@@ -209,6 +233,8 @@ def constructors() -> rx.Component:
                     ConstructorsState.season_selector_disabled,
                     ConstructorsState.round_selector_disabled,
                 ),
+                # Show loading and errors before deciding whether standings
+                # are available for the currently selected race.
                 rx.cond(
                     ConstructorsState.loading,
                     loading_panel(),
