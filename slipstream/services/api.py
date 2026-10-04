@@ -1,19 +1,19 @@
-"""Fetch and normalize Formula 1 championship standings."""
+"""Fetch and normalize Formula 1 schedules and championship standings."""
 
 # Use Any for the raw response shape supplied by the external client.
 from datetime import date, datetime
 from functools import lru_cache
 from typing import Any
 
-# FastF1 provides the Ergast client used to retrieve standings.
+# FastF1 provides the Ergast client used to retrieve calendars and standings.
 import fastf1
 import fastf1.plotting
 from fastf1.ergast import Ergast
 
-# Avoid reusing cached results when standings are requested.
+# Avoid reusing cached results when schedule or standings data is requested.
 fastf1.Cache.set_disabled()
 
-# Reuse one Ergast client for both driver and constructor requests.
+# Reuse one Ergast client for schedule and standings requests.
 ergast: Ergast = Ergast()
 
 
@@ -74,6 +74,75 @@ def get_completed_races(season: int | str) -> list[dict[str, str]]:
         )
 
     return sorted(races, key=lambda race: int(race["round"]))
+
+
+def get_current_race_weekend(today: date | None = None) -> dict[str, str] | None:
+    """Return the current race weekend when today's date falls within it.
+
+    The weekend begins on the date of its first scheduled session and ends on
+    race day. Future weekends and events whose session dates are unavailable
+    are not returned.
+
+    Args:
+        today: Date to check, defaulting to the server's local date.
+
+    Returns:
+        A display-ready event record, or ``None`` when no weekend is underway.
+    """
+    current_date: date = today or date.today()
+    response: Any = ergast.get_race_schedule(
+        season=current_date.year, result_type="raw", limit=1000
+    )
+    if not response:
+        return None
+
+    session_fields: tuple[str, ...] = (
+        "FirstPractice",
+        "SecondPractice",
+        "ThirdPractice",
+        "Sprint",
+        "SprintShootout",
+        "Qualifying",
+    )
+    for race in response:
+        race_date: date | None = parse_race_date(race.get("date"))
+        if race_date is None:
+            continue
+
+        session_dates: list[date] = []
+        for field in session_fields:
+            session: Any = race.get(field)
+            if isinstance(session, dict):
+                session_date: date | None = parse_race_date(session.get("date"))
+                if session_date is not None:
+                    session_dates.append(session_date)
+        if not session_dates:
+            continue
+
+        start_date: date = min(session_dates)
+        if not start_date <= current_date <= race_date:
+            continue
+
+        round_number: str = format_value(race.get("round"))
+        race_name: str = format_value(race.get("raceName"))
+        if not round_number or not race_name:
+            continue
+
+        circuit: dict[str, Any] = race.get("Circuit") or {}
+        location: dict[str, Any] = circuit.get("Location") or {}
+        return {
+            "round": round_number,
+            "race_name": race_name,
+            "circuit_name": format_value(circuit.get("circuitName")),
+            "locality": format_value(location.get("locality")),
+            "country": format_value(location.get("country")),
+            "date_range": (
+                f"{start_date.strftime('%d %b')} – "
+                f"{race_date.strftime('%d %b %Y')}"
+            ),
+        }
+
+    return None
 
 
 def parse_race_date(value: object) -> date | None:
