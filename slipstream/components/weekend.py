@@ -1,13 +1,40 @@
 """Components for the current race weekend overview."""
 
 import reflex as rx
+from slipstream.services import ScheduleDay, ScheduledSession
 
 
-def _schedule_day_column(day: rx.Var[dict[str, str]]) -> rx.Component:
+def _schedule_session_row(session: rx.Var[ScheduledSession]) -> rx.Component:
+    """Keep a session's name and UTC start time on one aligned row."""
+    return rx.hstack(
+        rx.text(
+            session["name"],
+            size="2",
+            weight="medium",
+            color=rx.color("gray", 12),
+        ),
+        rx.text(
+            session["time"],
+            size="2",
+            weight="bold",
+            color=rx.color("accent", 11),
+            white_space="nowrap",
+            font_variant_numeric="tabular-nums",
+            text_align="right",
+            flex_shrink="0",
+        ),
+        justify="between",
+        align="start",
+        spacing="3",
+        width="100%",
+    )
+
+
+def _schedule_day_column(day: rx.Var[ScheduleDay]) -> rx.Component:
     """Render one date and its sessions inside the weekend card.
 
     Args:
-        day: Reactive row containing the day label, date, and session names.
+        day: Reactive row containing the date and timed sessions.
 
     Returns:
         A card for one scheduled day.
@@ -23,13 +50,11 @@ def _schedule_day_column(day: rx.Var[dict[str, str]]) -> rx.Component:
             ),
             rx.text(day["date"], size="2", color=rx.color("gray", 10)),
             rx.separator(),
-            rx.text(
-                day["sessions"],
-                size="2",
-                weight="medium",
-                color=rx.color("gray", 12),
-                white_space="pre-line",
-                line_height="1.7",
+            rx.vstack(
+                rx.foreach(day["sessions"], _schedule_session_row),
+                align="stretch",
+                spacing="2",
+                width="100%",
             ),
             align="stretch",
             spacing="2",
@@ -46,7 +71,7 @@ def _schedule_day_column(day: rx.Var[dict[str, str]]) -> rx.Component:
 
 def current_weekend_card(
     weekend: rx.Var[dict[str, str]],
-    schedule_days: rx.Var[list[dict[str, str]]],
+    schedule_days: rx.Var[list[ScheduleDay]],
     schedule_column_count: rx.Var[str],
 ) -> rx.Component:
     """Render the current event details and its schedule.
@@ -120,16 +145,24 @@ def current_weekend_card(
             # rx.foreach renders one card for each reactive schedule row; the
             # state-derived column count controls how those cards form a grid.
             rx.vstack(
-                rx.text(
-                    "EVENT SCHEDULE",
-                    size="2",
-                    weight="bold",
-                    color=rx.color("accent", 11),
-                    letter_spacing="0.14em",
+                rx.hstack(
+                    rx.text(
+                        "EVENT SCHEDULE",
+                        size="2",
+                        weight="bold",
+                        color=rx.color("accent", 11),
+                        letter_spacing="0.14em",
+                    ),
+                    rx.text("ALL TIMES UTC", size="1", color=rx.color("gray", 10)),
+                    justify="between",
+                    align="center",
+                    width="100%",
+                    flex_wrap="wrap",
+                    gap="2",
                 ),
                 rx.grid(
                     rx.foreach(schedule_days, _schedule_day_column),
-                    columns=schedule_column_count,
+                    columns=rx.breakpoints(initial="1", md=schedule_column_count),
                     spacing="3",
                     width="100%",
                 ),
