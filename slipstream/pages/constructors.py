@@ -7,13 +7,12 @@ from collections.abc import AsyncGenerator
 import reflex as rx
 
 # Reuse shared presentation components and the constructor standings service.
-from slipstream.components import container, navbar
+from slipstream.components import container, navbar, page_header
 from slipstream.components.championship import (
     championship_filters,
     leaderboard_section,
     loading_panel,
     message_panel,
-    page_header,
     podium_section,
 )
 from slipstream.services import (
