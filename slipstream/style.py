@@ -1,1 +1,1 @@
-"""Shared style definitions for the Slipstream application."""
+"""Reserved for shared styles; components currently define local styles."""

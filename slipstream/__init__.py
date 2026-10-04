@@ -1,1 +1,1 @@
-"""Slipstream championship standings application."""
+"""Slipstream Formula 1 results and championship application."""
