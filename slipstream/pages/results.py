@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncGenerator
+from typing import Any
 
 import reflex as rx
 from slipstream.components import container, navbar
@@ -13,6 +14,7 @@ class ResultsState(rx.State):
     """Load and expose the race weekend currently underway."""
 
     current_weekend: dict[str, str] = {}
+    schedule_days: list[dict[str, str]] = []
     loading: bool = True
     error: str = ""
 
@@ -21,25 +23,83 @@ class ResultsState(rx.State):
         """Report whether the calendar contains an in-progress weekend."""
         return bool(self.current_weekend)
 
+    @rx.var
+    def schedule_column_count(self) -> str:
+        """Set one grid column for each date with a scheduled session."""
+        return str(max(len(self.schedule_days), 1))
+
     @rx.event
     async def load_current_weekend(self) -> AsyncGenerator[None, None]:
         """Fetch the schedule and select an event only within its date range."""
         self.loading = True
         self.error = ""
+        self.current_weekend = {}
+        self.schedule_days = []
         yield
         try:
-            weekend: dict[str, str] | None = await asyncio.to_thread(
+            weekend: dict[str, Any] | None = await asyncio.to_thread(
                 get_current_race_weekend
             )
-            self.current_weekend = weekend or {}
+            if weekend is not None:
+                self.current_weekend = {
+                    key: weekend[key]
+                    for key in (
+                        "round",
+                        "race_name",
+                        "circuit_name",
+                        "locality",
+                        "country",
+                        "date_range",
+                    )
+                }
+                self.schedule_days = weekend["schedule_days"]
         except Exception:
             self.current_weekend = {}
+            self.schedule_days = []
             self.error = "Could not load the current race weekend. Please try again."
         finally:
             self.loading = False
 
 
-def current_weekend_card(weekend: rx.Var[dict[str, str]]) -> rx.Component:
+def schedule_day_column(day: rx.Var[dict[str, str]]) -> rx.Component:
+    """Render one date and its scheduled sessions inside the weekend card."""
+    return rx.card(
+        rx.vstack(
+            rx.text(
+                day["day"],
+                size="2",
+                weight="bold",
+                color=rx.color("accent", 11),
+                letter_spacing="0.08em",
+            ),
+            rx.text(day["date"], size="2", color=rx.color("gray", 10)),
+            rx.separator(),
+            rx.text(
+                day["sessions"],
+                size="2",
+                weight="medium",
+                color=rx.color("gray", 12),
+                white_space="pre-line",
+                line_height="1.7",
+            ),
+            align="stretch",
+            spacing="2",
+            width="100%",
+        ),
+        size="2",
+        width="100%",
+        background_color=rx.color("gray", 1),
+        border_width="1px",
+        border_style="solid",
+        border_color=rx.color("gray", 5),
+    )
+
+
+def current_weekend_card(
+    weekend: rx.Var[dict[str, str]],
+    schedule_days: rx.Var[list[dict[str, str]]],
+    schedule_column_count: rx.Var[str],
+) -> rx.Component:
     """Render the event, circuit, location, and calendar range in a card."""
     return rx.card(
         rx.vstack(
@@ -94,6 +154,25 @@ def current_weekend_card(weekend: rx.Var[dict[str, str]]) -> rx.Component:
                 rx.icon("calendar-days", size=20, color=rx.color("accent", 11)),
                 rx.text(weekend["date_range"], weight="medium"),
                 align="center",
+                spacing="3",
+                width="100%",
+            ),
+            rx.separator(),
+            rx.vstack(
+                rx.text(
+                    "EVENT SCHEDULE",
+                    size="2",
+                    weight="bold",
+                    color=rx.color("accent", 11),
+                    letter_spacing="0.14em",
+                ),
+                rx.grid(
+                    rx.foreach(schedule_days, schedule_day_column),
+                    columns=schedule_column_count,
+                    spacing="3",
+                    width="100%",
+                ),
+                align="stretch",
                 spacing="3",
                 width="100%",
             ),
@@ -162,7 +241,11 @@ def results() -> rx.Component:
                         ),
                         rx.cond(
                             ResultsState.has_current_weekend,
-                            current_weekend_card(ResultsState.current_weekend),
+                            current_weekend_card(
+                                ResultsState.current_weekend,
+                                ResultsState.schedule_days,
+                                ResultsState.schedule_column_count,
+                            ),
                             weekend_status_card(
                                 "No race weekend is underway",
                                 "The weekend overview will appear here once a Grand Prix weekend begins.",
