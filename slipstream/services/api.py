@@ -76,7 +76,7 @@ def get_completed_races(season: int | str) -> list[dict[str, str]]:
     return sorted(races, key=lambda race: int(race["round"]))
 
 
-def get_current_race_weekend(today: date | None = None) -> dict[str, str] | None:
+def get_current_race_weekend(today: date | None = None) -> dict[str, Any] | None:
     """Return the current race weekend when today's date falls within it.
 
     The weekend begins on the date of its first scheduled session and ends on
@@ -96,13 +96,14 @@ def get_current_race_weekend(today: date | None = None) -> dict[str, str] | None
     if not response:
         return None
 
-    session_fields: tuple[str, ...] = (
-        "FirstPractice",
-        "SecondPractice",
-        "ThirdPractice",
-        "Sprint",
-        "SprintShootout",
-        "Qualifying",
+    session_fields: tuple[tuple[str, str], ...] = (
+        ("FirstPractice", "Practice 1"),
+        ("SecondPractice", "Practice 2"),
+        ("ThirdPractice", "Practice 3"),
+        ("SprintQualifying", "Sprint Qualifying"),
+        ("SprintShootout", "Sprint Qualifying"),
+        ("Sprint", "Sprint"),
+        ("Qualifying", "Qualifying"),
     )
     for race in response:
         race_date: date | None = parse_race_date(race.get("date"))
@@ -110,12 +111,14 @@ def get_current_race_weekend(today: date | None = None) -> dict[str, str] | None
             continue
 
         session_dates: list[date] = []
-        for field in session_fields:
+        for field, _ in session_fields:
             session: Any = race.get(field)
-            if isinstance(session, dict):
-                session_date: date | None = parse_race_date(session.get("date"))
-                if session_date is not None:
-                    session_dates.append(session_date)
+            session_date_value: object = (
+                session.get("date") if isinstance(session, dict) else session
+            )
+            session_date: date | None = parse_race_date(session_date_value)
+            if session_date is not None:
+                session_dates.append(session_date)
         if not session_dates:
             continue
 
@@ -130,12 +133,37 @@ def get_current_race_weekend(today: date | None = None) -> dict[str, str] | None
 
         circuit: dict[str, Any] = race.get("Circuit") or {}
         location: dict[str, Any] = circuit.get("Location") or {}
+        sessions_by_date: dict[date, list[str]] = {}
+        for field, session_name in session_fields:
+            session: Any = race.get(field)
+            session_date_value: object = (
+                session.get("date") if isinstance(session, dict) else session
+            )
+            session_date = parse_race_date(session_date_value)
+            if session_date is None or not start_date <= session_date <= race_date:
+                continue
+
+            day_sessions: list[str] = sessions_by_date.setdefault(session_date, [])
+            if session_name not in day_sessions:
+                day_sessions.append(session_name)
+
+        # The race is a scheduled session stored in the top-level race date.
+        sessions_by_date.setdefault(race_date, []).append("Race")
+        schedule_days: list[dict[str, str]] = [
+            {
+                "day": session_date.strftime("%A").upper(),
+                "date": f"{session_date.day} {session_date.strftime('%b')}",
+                "sessions": "\n".join(day_sessions),
+            }
+            for session_date, day_sessions in sorted(sessions_by_date.items())
+        ]
         return {
             "round": round_number,
             "race_name": race_name,
             "circuit_name": format_value(circuit.get("circuitName")),
             "locality": format_value(location.get("locality")),
             "country": format_value(location.get("country")),
+            "schedule_days": schedule_days,
             "date_range": (
                 f"{start_date.strftime('%d %b')} – "
                 f"{race_date.strftime('%d %b %Y')}"
