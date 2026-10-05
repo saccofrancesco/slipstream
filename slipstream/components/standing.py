@@ -3,6 +3,8 @@
 # Reflex provides the reactive values and UI components used by this module.
 import reflex as rx
 
+from .flag import flag_icon
+
 
 def standing(
     entry: rx.Var[dict[str, str]],
@@ -52,11 +54,17 @@ def standing(
                     white_space="nowrap",
                 ),
                 rx.text("·", size="2", color=rx.color("gray", 9)),
-                rx.text(
-                    entry["nationality"],
-                    size="2",
-                    color=rx.color("gray", 10),
-                    white_space="nowrap",
+                rx.hstack(
+                    flag_icon(entry["country_flag"], entry["nationality"]),
+                    rx.text(
+                        entry["nationality"],
+                        size="2",
+                        color=rx.color("gray", 10),
+                        white_space="nowrap",
+                    ),
+                    align="center",
+                    spacing="1",
+                    flex_shrink="0",
                 ),
                 align="center",
                 spacing="2",
