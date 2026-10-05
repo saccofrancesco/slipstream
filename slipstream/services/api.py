@@ -10,6 +10,8 @@ import fastf1.plotting
 from fastf1.core import Session
 from fastf1.ergast import Ergast
 
+from .flags import flag_for_circuit_country, flag_for_nationality
+
 # Avoid reusing cached results when schedule or standings data is requested.
 fastf1.Cache.set_disabled()
 
@@ -42,6 +44,7 @@ class RaceWeekend(TypedDict):
     circuit_name: str
     locality: str
     country: str
+    country_flag: str
     date_range: str
     schedule_days: list[ScheduleDay]
 
@@ -53,6 +56,8 @@ class PastEvent(TypedDict):
     race_name: str
     race_date: str
     circuit_name: str
+    country: str
+    country_flag: str
 
 
 def get_available_seasons(start_year: int = 1950) -> list[str]:
@@ -150,6 +155,8 @@ def get_past_events(
             continue
 
         circuit: dict[str, Any] = race.get("Circuit") or {}
+        location: dict[str, Any] = circuit.get("Location") or {}
+        country = format_value(location.get("country"))
         dated_events.append(
             (
                 race_date,
@@ -158,6 +165,8 @@ def get_past_events(
                     "race_name": race_name,
                     "race_date": race_date.strftime("%d %b %Y"),
                     "circuit_name": format_value(circuit.get("circuitName")),
+                    "country": country,
+                    "country_flag": flag_for_circuit_country(country),
                 },
             )
         )
@@ -252,6 +261,7 @@ def get_race_weekend(
     race_name = format_value(race.get("raceName"))
     circuit: dict[str, Any] = race.get("Circuit") or {}
     location: dict[str, Any] = circuit.get("Location") or {}
+    country = format_value(location.get("country"))
     # Build the display schedule only for the selected weekend. Keep each
     # session's start time with its name so the card can align them.
     sessions_by_date: dict[date, dict[str, ScheduledSession]] = {}
@@ -302,7 +312,8 @@ def get_race_weekend(
         "race_name": race_name,
         "circuit_name": format_value(circuit.get("circuitName")),
         "locality": format_value(location.get("locality")),
-        "country": format_value(location.get("country")),
+        "country": country,
+        "country_flag": flag_for_circuit_country(country),
         "schedule_days": schedule_days,
         "date_range": (
             f"{start_date.strftime('%d %b')} – "
@@ -397,6 +408,7 @@ def get_driver_standings(
     standings: list[dict[str, str]] = []
     for row in rows:
         driver: dict[str, Any] = row.get("Driver", {})
+        nationality = format_value(driver.get("nationality"))
         constructors: list[dict[str, Any]] = row.get("Constructors", [])
         team_names: list[str] = [
             constructor["name"]
@@ -414,7 +426,8 @@ def get_driver_standings(
                 "position": format_value(row.get("position")),
                 "given_name": format_value(driver.get("givenName")),
                 "family_name": format_value(driver.get("familyName")),
-                "nationality": format_value(driver.get("nationality")),
+                "nationality": nationality,
+                "country_flag": flag_for_nationality(nationality),
                 "team": ", ".join(team_names),
                 "points": format_value(row.get("points")),
                 "team_color": team_color,
