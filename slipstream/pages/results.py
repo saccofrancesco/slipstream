@@ -1,34 +1,50 @@
-"""Current or upcoming race weekend overview for the results page."""
+"""Featured race weekend and season archive for the results page."""
 
 import asyncio
 from collections.abc import AsyncGenerator
+from datetime import date
 
 import reflex as rx
 from slipstream.components import container, navbar, page_header
-from slipstream.components.weekend import race_weekend_card, weekend_status_card
+from slipstream.components.weekend import (
+    race_weekend_card,
+    season_archive_section,
+    weekend_status_card,
+)
 from slipstream.services import (
+    PastEvent,
     RaceWeekend,
     ScheduleDay,
+    get_past_events,
     get_race_weekend,
 )
 
 
 class ResultsState(rx.State):
-    """Hold the selected weekend, its schedule, and the request status.
+    """Hold the featured weekend, its schedule, and the season archive.
 
-    Scalar event details and schedule rows are stored separately so the card
-    can render each schedule date with ``rx.foreach``.
+    Scalar event details, schedule days, and archive entries are stored
+    separately so each list can render with ``rx.foreach``.
     """
 
     race_weekend: dict[str, str] = {}
     schedule_days: list[ScheduleDay] = []
+    past_events: list[PastEvent] = []
+    archive_season: str = str(date.today().year)
     loading: bool = True
+    archive_loading: bool = True
     error: str = ""
+    archive_error: str = ""
 
     @rx.var
     def has_race_weekend(self) -> bool:
         """Report whether the calendar contains a current or future weekend."""
         return bool(self.race_weekend)
+
+    @rx.var
+    def has_past_events(self) -> bool:
+        """Report whether the chosen season has any completed races."""
+        return bool(self.past_events)
 
     @rx.var
     def weekend_heading(self) -> str:
@@ -59,25 +75,31 @@ class ResultsState(rx.State):
 
     @rx.event
     async def load_race_weekend(self) -> AsyncGenerator[None, None]:
-        """Fetch the current or next weekend and publish its display data.
+        """Load the featured weekend, then its season's past events.
 
         Yields:
-            A state update that shows the loading card before the API call.
+            Loading feedback, followed by the featured weekend when ready.
         """
+        current_date: date = date.today()
         # Clear the previous result before yielding so a reload cannot show
-        # stale event details while the calendar request is in progress.
+        # stale event details or archive entries during either request.
         self.loading = True
+        self.archive_loading = True
         self.error = ""
+        self.archive_error = ""
         self.race_weekend = {}
         self.schedule_days = []
+        self.past_events = []
+        self.archive_season = str(current_date.year)
         yield
         try:
             # The FastF1 client is synchronous; keep its request off the
             # Reflex event loop while retaining an async page-load event.
             weekend: RaceWeekend | None = await asyncio.to_thread(
-                get_race_weekend
+                get_race_weekend, current_date
             )
             if weekend is not None:
+                self.archive_season = weekend["season"]
                 # Keep the card's scalar values separate from its list of
                 # schedule rows, which has a different state type.
                 self.race_weekend = {
@@ -96,14 +118,25 @@ class ResultsState(rx.State):
             self.error = "Could not load the race schedule. Please try again."
         finally:
             self.loading = False
+        yield
+
+        try:
+            self.past_events = await asyncio.to_thread(
+                get_past_events, self.archive_season, current_date
+            )
+        except Exception:
+            self.past_events = []
+            self.archive_error = "Could not load past events. Please try again."
+        finally:
+            self.archive_loading = False
 
 
 @rx.page("/results", "Results", on_load=ResultsState.load_race_weekend)
 def results() -> rx.Component:
-    """Render the current or next weekend, or the request status.
+    """Render the featured weekend and the matching season archive.
 
     Returns:
-        The Results page with navigation, header, and weekend content.
+        The Results page with navigation, featured weekend, and past events.
     """
     return rx.vstack(
         navbar(active_section="results"),
@@ -139,6 +172,13 @@ def results() -> rx.Component:
                             ),
                         ),
                     ),
+                ),
+                season_archive_section(
+                    ResultsState.archive_season,
+                    ResultsState.past_events,
+                    ResultsState.archive_loading,
+                    ResultsState.archive_error,
+                    ResultsState.has_past_events,
                 ),
                 align="stretch",
                 spacing="6",
