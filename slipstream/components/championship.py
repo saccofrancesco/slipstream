@@ -131,7 +131,7 @@ def podium_section(
             padding="1",
         )
 
-    # Pair the section label with one horizontally arranged card per entry.
+    # Give featured cards a full row each until there is room for three.
     return rx.vstack(
         rx.hstack(
             rx.vstack(
@@ -149,11 +149,13 @@ def podium_section(
             align="start",
             width="100%",
         ),
-        rx.hstack(
+        rx.grid(
             rx.foreach(
                 entries,
                 render_podium_entry,
             ),
+            columns=rx.breakpoints(initial="1", lg="3"),
+            spacing="2",
             width="100%",
         ),
         align="stretch",
