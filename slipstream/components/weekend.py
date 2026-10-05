@@ -3,6 +3,8 @@
 import reflex as rx
 from slipstream.services import PastEvent, ScheduleDay, ScheduledSession
 
+from .flag import flag_icon
+
 
 def _schedule_session_row(session: rx.Var[ScheduledSession]) -> rx.Component:
     """Keep a session's name and UTC start time on one aligned row."""
@@ -127,9 +129,14 @@ def race_weekend_card(
                 rx.icon("map-pin", size=20, color=rx.color("accent", 11)),
                 rx.vstack(
                     rx.text(weekend["circuit_name"], weight="bold"),
-                    rx.text(
-                        f"{weekend['locality']}, {weekend['country']}",
-                        color=rx.color("gray", 11),
+                    rx.hstack(
+                        flag_icon(weekend["country_flag"], weekend["country"]),
+                        rx.text(
+                            f"{weekend['locality']}, {weekend['country']}",
+                            color=rx.color("gray", 11),
+                        ),
+                        align="center",
+                        spacing="2",
                     ),
                     align="start",
                     spacing="1",
@@ -221,11 +228,16 @@ def _past_event_card(event: rx.Var[PastEvent]) -> rx.Component:
                 ),
                 rx.cond(
                     event["circuit_name"] != "",
-                    rx.text(
-                        event["circuit_name"],
-                        size="2",
-                        color=rx.color("gray", 10),
-                        line_height="1.3",
+                    rx.hstack(
+                        flag_icon(event["country_flag"], event["country"]),
+                        rx.text(
+                            event["circuit_name"],
+                            size="2",
+                            color=rx.color("gray", 10),
+                            line_height="1.3",
+                        ),
+                        align="center",
+                        spacing="2",
                     ),
                     rx.fragment(),
                 ),
