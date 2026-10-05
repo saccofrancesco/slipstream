@@ -1,7 +1,7 @@
-"""Components for the current or upcoming race weekend overview."""
+"""Components for the featured weekend and the past-race archive."""
 
 import reflex as rx
-from slipstream.services import ScheduleDay, ScheduledSession
+from slipstream.services import PastEvent, ScheduleDay, ScheduledSession
 
 
 def _schedule_session_row(session: rx.Var[ScheduledSession]) -> rx.Component:
@@ -183,6 +183,115 @@ def race_weekend_card(
         border_width="1px",
         border_style="solid",
         border_color=rx.color("gray", 5),
+    )
+
+
+def _past_event_card(event: rx.Var[PastEvent]) -> rx.Component:
+    """Render one compact, non-interactive archive entry."""
+    return rx.card(
+        rx.hstack(
+            rx.badge(
+                f"ROUND {event['round']}",
+                color_scheme="red",
+                variant="soft",
+                size="1",
+                flex_shrink="0",
+            ),
+            rx.vstack(
+                rx.hstack(
+                    rx.text(
+                        event["race_name"],
+                        size="3",
+                        weight="bold",
+                        color=rx.color("gray", 12),
+                        line_height="1.3",
+                    ),
+                    rx.text(
+                        event["race_date"],
+                        size="2",
+                        color=rx.color("gray", 11),
+                        white_space="nowrap",
+                        flex_shrink="0",
+                    ),
+                    justify="between",
+                    align="center",
+                    flex_wrap="wrap",
+                    gap="1",
+                    width="100%",
+                ),
+                rx.cond(
+                    event["circuit_name"] != "",
+                    rx.text(
+                        event["circuit_name"],
+                        size="2",
+                        color=rx.color("gray", 10),
+                        line_height="1.3",
+                    ),
+                    rx.fragment(),
+                ),
+                align="stretch",
+                spacing="1",
+                min_width="0",
+                width="100%",
+            ),
+            align="center",
+            spacing="3",
+            width="100%",
+        ),
+        key=event["round"],
+        size="1",
+        width="100%",
+        background_color=rx.color("gray", 2),
+        border_width="1px",
+        border_style="solid",
+        border_color=rx.color("gray", 5),
+    )
+
+
+def _archive_message(message: rx.Var[str] | str) -> rx.Component:
+    """Show a short loading, empty, or error message below the archive title."""
+    return rx.card(
+        rx.text(message, size="2", color=rx.color("gray", 11)),
+        size="1",
+        width="100%",
+        background_color=rx.color("gray", 2),
+        border_width="1px",
+        border_style="solid",
+        border_color=rx.color("gray", 5),
+    )
+
+
+def season_archive_section(
+    season: rx.Var[str],
+    events: rx.Var[list[PastEvent]],
+    loading: rx.Var[bool],
+    error: rx.Var[str],
+    has_events: rx.Var[bool],
+) -> rx.Component:
+    """Render a season's past races as a compact, vertically flowing list."""
+    return rx.vstack(
+        rx.heading(f"{season} Season archive", as_="h2", size="5"),
+        rx.cond(
+            loading,
+            _archive_message("Loading past events…"),
+            rx.cond(
+                error != "",
+                _archive_message(error),
+                rx.cond(
+                    has_events,
+                    rx.vstack(
+                        rx.foreach(events, _past_event_card),
+                        align="stretch",
+                        spacing="2",
+                        width="100%",
+                    ),
+                    _archive_message("No past events in this season yet."),
+                ),
+            ),
+        ),
+        align="stretch",
+        spacing="3",
+        width="100%",
     )
 
 
