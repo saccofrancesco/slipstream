@@ -35,6 +35,7 @@ class ScheduleDay(TypedDict):
 class RaceWeekend(TypedDict):
     """Normalized event details and schedule rows consumed by ResultsState."""
 
+    season: str
     status: str
     round: str
     race_name: str
@@ -43,6 +44,15 @@ class RaceWeekend(TypedDict):
     country: str
     date_range: str
     schedule_days: list[ScheduleDay]
+
+
+class PastEvent(TypedDict):
+    """Compact display fields for a completed race in the season archive."""
+
+    round: str
+    race_name: str
+    race_date: str
+    circuit_name: str
 
 
 def get_available_seasons(start_year: int = 1950) -> list[str]:
@@ -110,6 +120,56 @@ def get_completed_races(season: int | str) -> list[dict[str, str]]:
     return sorted(races, key=lambda race: int(race["round"]))
 
 
+def get_past_events(
+    season: int | str, today: date | None = None
+) -> list[PastEvent]:
+    """Return races before today, newest first, for one season.
+
+    Args:
+        season: Calendar season to show in the archive.
+        today: Date used to classify past races, defaulting to the server date.
+
+    Returns:
+        Compact race records ordered from the latest race to the opener.
+    """
+    current_date: date = today or date.today()
+    response: list[dict[str, Any]] = ergast.get_race_schedule(
+        season=int(season), result_type="raw", limit=1000
+    )
+    dated_events: list[tuple[date, PastEvent]] = []
+    for race in response:
+        race_date = parse_race_date(race.get("date"))
+        round_number = format_value(race.get("round"))
+        race_name = format_value(race.get("raceName"))
+        if (
+            race_date is None
+            or race_date >= current_date
+            or not round_number
+            or not race_name
+        ):
+            continue
+
+        circuit: dict[str, Any] = race.get("Circuit") or {}
+        dated_events.append(
+            (
+                race_date,
+                {
+                    "round": round_number,
+                    "race_name": race_name,
+                    "race_date": race_date.strftime("%d %b %Y"),
+                    "circuit_name": format_value(circuit.get("circuitName")),
+                },
+            )
+        )
+
+    return [
+        event
+        for _, event in sorted(
+            dated_events, key=lambda item: item[0], reverse=True
+        )
+    ]
+
+
 def get_race_weekend(
     today: date | None = None,
 ) -> RaceWeekend | None:
@@ -139,6 +199,7 @@ def get_race_weekend(
         ("Qualifying", "Qualifying"),
     )
     selected: tuple[date, date, dict[str, Any]] | None = None
+    selected_season: int = current_date.year
     status = ""
     for season in (current_date.year, current_date.year + 1):
         response: list[dict[str, Any]] = ergast.get_race_schedule(
@@ -174,10 +235,12 @@ def get_race_weekend(
 
         if current_events:
             selected = min(current_events, key=lambda event: event[1])
+            selected_season = season
             status = "current"
             break
         if future_events:
             selected = min(future_events, key=lambda event: event[0])
+            selected_season = season
             status = "upcoming"
             break
 
@@ -233,6 +296,7 @@ def get_race_weekend(
         for session_date, day_sessions in sorted(sessions_by_date.items())
     ]
     return {
+        "season": str(selected_season),
         "status": status,
         "round": round_number,
         "race_name": race_name,
