@@ -29,51 +29,42 @@ def standing(
     # Build the identity details appropriate to the entry type.
     identity: rx.Component
     if is_driver:
-        # Show a driver's name above their team and nationality.
+        # Keep the nationality flag with the driver, above the team name.
         identity = rx.vstack(
+            rx.hstack(
+                flag_icon(entry["country_flag"], entry["nationality"]),
+                rx.text(
+                    entry["given_name"],
+                    " ",
+                    entry["family_name"],
+                    size="4" if featured else "3",
+                    weight="bold",
+                    line_height="1.25",
+                    overflow="hidden",
+                    text_overflow="ellipsis",
+                    white_space="nowrap",
+                    min_width="0",
+                ),
+                align="center",
+                spacing="2",
+                width="100%",
+                min_width="0",
+                overflow="hidden",
+            ),
             rx.text(
-                entry["given_name"],
-                " ",
-                entry["family_name"],
-                size="4" if featured else "3",
-                weight="bold",
-                line_height="1.25",
+                entry["team"],
+                size="2",
+                weight="medium",
+                color=rx.color("gray", 11),
                 overflow="hidden",
                 text_overflow="ellipsis",
                 white_space="nowrap",
                 width="100%",
             ),
-            rx.hstack(
-                rx.text(
-                    entry["team"],
-                    size="2",
-                    weight="medium",
-                    color=rx.color("gray", 11),
-                    overflow="hidden",
-                    text_overflow="ellipsis",
-                    white_space="nowrap",
-                ),
-                rx.text("·", size="2", color=rx.color("gray", 9)),
-                rx.hstack(
-                    flag_icon(entry["country_flag"], entry["nationality"]),
-                    rx.text(
-                        entry["nationality"],
-                        size="2",
-                        color=rx.color("gray", 10),
-                        white_space="nowrap",
-                    ),
-                    align="center",
-                    spacing="1",
-                    flex_shrink="0",
-                ),
-                align="center",
-                spacing="2",
-                width="100%",
-                overflow="hidden",
-            ),
             align="start",
             spacing="1",
             width="100%",
+            min_width="0",
         )
     else:
         # Keep a constructor's name on one line.
