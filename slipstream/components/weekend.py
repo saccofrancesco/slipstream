@@ -102,12 +102,31 @@ def race_weekend_card(
                         color=rx.color("accent", 11),
                         letter_spacing="0.14em",
                     ),
-                    rx.heading(
-                        weekend["race_name"],
-                        as_="h2",
-                        size="7",
-                        weight="bold",
-                        letter_spacing="-0.03em",
+                    rx.hstack(
+                        rx.cond(
+                            weekend["country_flag"] != "",
+                            rx.box(
+                                flag_icon(
+                                    weekend["country_flag"], weekend["country"]
+                                ),
+                                font_size="2rem",
+                                line_height="1",
+                                flex_shrink="0",
+                            ),
+                            rx.fragment(),
+                        ),
+                        rx.heading(
+                            weekend["race_name"],
+                            as_="h2",
+                            size="7",
+                            weight="bold",
+                            letter_spacing="-0.03em",
+                            min_width="0",
+                            flex="1",
+                        ),
+                        align="center",
+                        spacing="2",
+                        width="100%",
                     ),
                     align="start",
                     spacing="1",
@@ -130,7 +149,6 @@ def race_weekend_card(
                 rx.vstack(
                     rx.text(weekend["circuit_name"], weight="bold"),
                     rx.hstack(
-                        flag_icon(weekend["country_flag"], weekend["country"]),
                         rx.text(
                             f"{weekend['locality']}, {weekend['country']}",
                             color=rx.color("gray", 11),
