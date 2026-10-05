@@ -109,6 +109,7 @@ class ResultsState(rx.State):
                     "circuit_name": weekend["circuit_name"],
                     "locality": weekend["locality"],
                     "country": weekend["country"],
+                    "country_flag": weekend["country_flag"],
                     "date_range": weekend["date_range"],
                 }
                 self.schedule_days = weekend["schedule_days"]
