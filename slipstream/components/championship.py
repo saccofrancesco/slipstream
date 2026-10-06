@@ -1,9 +1,8 @@
 """Build championship standings sections and feedback panels."""
 
-# Reflex provides the reactive values and UI components used below.
 import reflex as rx
 
-# Reuse the standing card for both podium and leaderboard rows.
+from .layout import status_card
 from .standing import standing
 
 
@@ -145,38 +144,40 @@ def loading_panel() -> rx.Component:
     )
 
 
-def message_panel(message: rx.Var[str] | str) -> rx.Component:
-    """Build a feedback card for an unavailable or empty standings result.
-
-    Args:
-        message: Static text or a reactive message to show to the user.
-
-    Returns:
-        A card with an icon, heading, and explanatory message.
-    """
-    # Pair a status icon with the heading and caller-supplied explanation.
-    return rx.card(
-        rx.hstack(
-            rx.box(
-                rx.icon("flag", size=20, color=rx.color("accent", 11)),
-                padding="3",
-                border_radius="full",
-                background_color=rx.color("accent", 3),
-            ),
-            rx.vstack(
-                rx.heading("Standings unavailable", size="4", weight="bold"),
-                rx.text(message, color=rx.color("gray", 11), line_height="1.5"),
-                align="start",
-                spacing="1",
-                width="100%",
-            ),
-            align="center",
-            spacing="4",
-            width="100%",
+def championship_section(
+    podium: rx.Var[list[dict[str, str]]],
+    remaining: rx.Var[list[dict[str, str]]],
+    has_remaining: rx.Var[bool],
+    has_standings: rx.Var[bool],
+    loading: rx.Var[bool],
+    error: rx.Var[str],
+    is_driver: bool,
+) -> rx.Component:
+    """Render the shared championship loading, feedback, and standings flow."""
+    standings_content: rx.Component = rx.vstack(
+        podium_section(podium, is_driver=is_driver),
+        rx.cond(
+            has_remaining,
+            leaderboard_section(remaining, is_driver=is_driver),
+            rx.fragment(),
         ),
+        align="stretch",
+        spacing="7",
         width="100%",
-        background_color=rx.color("gray", 2),
-        border_width="1px",
-        border_style="solid",
-        border_color=rx.color("gray", 5),
+        padding_bottom="8",
+    )
+    return rx.cond(
+        loading,
+        loading_panel(),
+        rx.cond(
+            error != "",
+            status_card("Standings unavailable", error),
+            rx.cond(
+                has_standings,
+                standings_content,
+                status_card(
+                    "Standings unavailable", "No standings are available yet."
+                ),
+            ),
+        ),
     )
