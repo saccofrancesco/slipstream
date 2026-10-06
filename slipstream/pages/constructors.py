@@ -9,7 +9,6 @@ import reflex as rx
 # Reuse shared presentation components and the constructor standings service.
 from slipstream.components import container, navbar, page_header
 from slipstream.components.championship import (
-    championship_filters,
     leaderboard_section,
     loading_panel,
     message_panel,
@@ -23,37 +22,11 @@ from slipstream.services import (
 
 
 class ConstructorsState(rx.State):
-    """Hold team standings and the season and round used to fetch them.
-
-    Selection events refresh the dependent options and standings; computed
-    vars provide the labels and subsets consumed by the page components.
-    """
+    """Hold the latest team standings and page feedback."""
 
     standings: list[dict[str, str]] = []
-    seasons: list[str] = []
-    selected_season: str = ""
-    races: list[dict[str, str]] = []
-    selected_round: str = ""
     loading: bool = False
     error: str = ""
-
-    @rx.var
-    def selected_round_label(self) -> str:
-        """Return the display label for the selected round."""
-        for race in self.races:
-            if race["round"] == self.selected_round:
-                return race["label"]
-        return "Choose a completed race"
-
-    @rx.var
-    def season_selector_disabled(self) -> bool:
-        """Disable season selection while loading or without season data."""
-        return self.loading or not self.seasons
-
-    @rx.var
-    def round_selector_disabled(self) -> bool:
-        """Disable race selection while loading or without race options."""
-        return self.loading or not self.races
 
     @rx.var
     def podium_standings(self) -> list[dict[str, str]]:
@@ -77,7 +50,7 @@ class ConstructorsState(rx.State):
 
     @rx.event
     async def load_standings(self) -> AsyncGenerator[None, None]:
-        """Load seasons, race options, and the latest constructor standings.
+        """Load the newest completed race's constructor standings.
 
         Yields:
             A state update after loading begins so the page can show its spinner.
@@ -85,28 +58,24 @@ class ConstructorsState(rx.State):
         # Set the loading state before starting the network request.
         self.loading = True
         self.error = ""
+        self.standings = []
         yield
         try:
             # Run the blocking API client call outside the event loop.
-            self.seasons = await asyncio.to_thread(get_available_seasons, 1958)
-            if not self.seasons:
-                self.error = "No championship seasons are available yet."
+            seasons = await asyncio.to_thread(get_available_seasons, 1958)
+            if not seasons:
+                self.error = "Championship data is not available yet."
                 return
-            self.selected_season = self.seasons[0]
-            # The newest completed round is the initial standings snapshot.
-            self.races = await asyncio.to_thread(
-                get_completed_races, self.selected_season
-            )
-            if not self.races:
-                self.error = (
-                    f"No completed races are available for {self.selected_season}."
-                )
+            season = seasons[0]
+            races = await asyncio.to_thread(get_completed_races, season)
+            if not races:
+                self.error = "No completed races are available yet."
                 return
-            self.selected_round = self.races[-1]["round"]
+            latest_race = races[-1]
             self.standings = await asyncio.to_thread(
                 get_constructor_standings,
-                int(self.selected_season),
-                int(self.selected_round),
+                int(season),
+                int(latest_race["round"]),
             )
             if not self.standings:
                 self.error = "No constructor standings are available for this race."
@@ -120,82 +89,13 @@ class ConstructorsState(rx.State):
             # Clear the loading indicator on both success and failure.
             self.loading = False
 
-    @rx.event
-    async def select_season(self, season: str) -> AsyncGenerator[None, None]:
-        """Load the latest completed race standings for a selected season.
-
-        Args:
-            season: Season selected in the page filter.
-
-        Yields:
-            A state update that clears the previous season's race options.
-        """
-        # A season change invalidates both the selected round and standings.
-        self.selected_season = season
-        self.races = []
-        self.selected_round = ""
-        self.standings = []
-        self.loading = True
-        self.error = ""
-        yield
-        try:
-            self.races = await asyncio.to_thread(get_completed_races, season)
-            if not self.races:
-                self.error = f"No completed races are available for {season}."
-                return
-            self.selected_round = self.races[-1]["round"]
-            self.standings = await asyncio.to_thread(
-                get_constructor_standings,
-                int(season),
-                int(self.selected_round),
-            )
-            if not self.standings:
-                self.error = "No constructor standings are available for this race."
-        except Exception:
-            self.standings = []
-            self.error = (
-                "Could not load constructor championship data. Please try again."
-            )
-        finally:
-            self.loading = False
-
-    @rx.event
-    async def select_round(self, round_number: str) -> AsyncGenerator[None, None]:
-        """Load constructor standings through the selected race round.
-
-        Args:
-            round_number: Completed race round selected in the page filter.
-
-        Yields:
-            A state update that shows the loading panel for this round.
-        """
-        self.selected_round = round_number
-        self.loading = True
-        self.error = ""
-        yield
-        try:
-            self.standings = await asyncio.to_thread(
-                get_constructor_standings,
-                int(self.selected_season),
-                int(round_number),
-            )
-            if not self.standings:
-                self.error = "No constructor standings are available for this race."
-        except Exception:
-            self.standings = []
-            self.error = (
-                "Could not load constructor championship data. Please try again."
-            )
-        finally:
-            self.loading = False
-
 
 @rx.page("/constructors", "Teams", on_load=ConstructorsState.load_standings)
 def constructors() -> rx.Component:
     """Render the team championship page.
 
     Returns:
-        A page with filters and the selected team standings snapshot.
+        A page with the latest team standings snapshot.
     """
     # Combine the podium and remaining rows into one content column.
     standings_content: rx.Component = rx.vstack(
@@ -220,21 +120,9 @@ def constructors() -> rx.Component:
                 page_header(
                     "Team championship",
                     "Teams’ Championship",
-                    "Review team standings for any season through a selected Grand Prix.",
+                    "Latest team championship standings.",
                 ),
-                championship_filters(
-                    ConstructorsState.seasons,
-                    ConstructorsState.selected_season,
-                    ConstructorsState.select_season,
-                    ConstructorsState.races,
-                    ConstructorsState.selected_round,
-                    ConstructorsState.selected_round_label,
-                    ConstructorsState.select_round,
-                    ConstructorsState.season_selector_disabled,
-                    ConstructorsState.round_selector_disabled,
-                ),
-                # Show loading and errors before deciding whether standings
-                # are available for the currently selected race.
+                # Show loading and errors before deciding whether standings are available.
                 rx.cond(
                     ConstructorsState.loading,
                     loading_panel(),
