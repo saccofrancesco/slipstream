@@ -61,3 +61,32 @@ def page_header(
         padding_top="7",
         padding_bottom="2",
     )
+
+
+def status_card(title: str, message: rx.Var[str] | str) -> rx.Component:
+    """Display a loading, empty, or error message in the shared card style."""
+    return rx.card(
+        rx.hstack(
+            rx.box(
+                rx.icon("flag", size=20, color=rx.color("accent", 11)),
+                padding="3",
+                border_radius="full",
+                background_color=rx.color("accent", 3),
+            ),
+            rx.vstack(
+                rx.heading(title, size="4", weight="bold"),
+                rx.text(message, color=rx.color("gray", 11), line_height="1.5"),
+                align="start",
+                spacing="1",
+                width="100%",
+            ),
+            align="center",
+            spacing="4",
+            width="100%",
+        ),
+        width="100%",
+        background_color=rx.color("gray", 2),
+        border_width="1px",
+        border_style="solid",
+        border_color=rx.color("gray", 5),
+    )
