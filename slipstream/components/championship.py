@@ -1,106 +1,10 @@
-"""Build championship filters, standings sections, and feedback panels."""
+"""Build championship standings sections and feedback panels."""
 
 # Reflex provides the reactive values and UI components used below.
 import reflex as rx
 
 # Reuse the standing card for both podium and leaderboard rows.
 from .standing import standing
-
-
-def championship_filters(
-    seasons: rx.Var[list[str]],
-    selected_season: rx.Var[str],
-    on_season_change: rx.EventHandler,
-    races: rx.Var[list[dict[str, str]]],
-    selected_round: rx.Var[str],
-    selected_round_label: rx.Var[str],
-    on_round_change: rx.EventHandler,
-    season_disabled: rx.Var[bool],
-    round_disabled: rx.Var[bool],
-) -> rx.Component:
-    """Build the shared season and completed-race selectors.
-
-    Args:
-        seasons: Available season years for the first selector.
-        selected_season: Currently selected season year.
-        on_season_change: Event handler called when the season changes.
-        races: Completed race options for the selected season.
-        selected_round: Round number currently selected.
-        selected_round_label: Race label shown in the round selector trigger.
-        on_round_change: Event handler called when the selected race changes.
-        season_disabled: Whether the season selector is unavailable.
-        round_disabled: Whether the race selector is unavailable.
-
-    Returns:
-        A compact responsive card containing both selectors.
-    """
-
-    def render_race_option(race: rx.Var[dict[str, str]]) -> rx.Component:
-        """Render a race label while keeping its round as the option value.
-
-        Args:
-            race: Reactive completed-race option.
-
-        Returns:
-            A select item that reports the race round on change.
-        """
-        return rx.select.item(race["label"], value=race["round"])
-
-    return rx.card(
-        rx.hstack(
-            rx.vstack(
-                rx.text(
-                    "SEASON",
-                    size="1",
-                    weight="bold",
-                    color=rx.color("gray", 10),
-                    letter_spacing="0.1em",
-                ),
-                rx.select(
-                    seasons,
-                    value=selected_season,
-                    on_change=on_season_change,
-                    disabled=season_disabled,
-                    width="100%",
-                    size="3",
-                ),
-                align="stretch",
-                spacing="2",
-                width="100%",
-            ),
-            rx.vstack(
-                rx.text(
-                    "STANDINGS THROUGH",
-                    size="1",
-                    weight="bold",
-                    color=rx.color("gray", 10),
-                    letter_spacing="0.1em",
-                ),
-                rx.select.root(
-                    rx.select.trigger(
-                        rx.text(selected_round_label),
-                        width="100%",
-                    ),
-                    rx.select.content(
-                        rx.foreach(races, render_race_option),
-                        position="popper",
-                        width="100%",
-                    ),
-                    value=selected_round,
-                    on_change=on_round_change,
-                    disabled=round_disabled,
-                    width="100%",
-                    size="3",
-                ),
-                align="stretch",
-                spacing="2",
-                width="100%",
-            ),
-            width="100%",
-        ),
-        width="100%",
-        background_color=rx.color("gray", 2),
-    )
 
 
 def podium_section(
