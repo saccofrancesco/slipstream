@@ -211,95 +211,197 @@ def race_weekend_card(
     )
 
 
-def _past_event_card(event: rx.Var[PastEvent]) -> rx.Component:
-    """Render one compact, non-interactive archive entry."""
+def event_summary_card(event: rx.Var[dict[str, str]]) -> rx.Component:
+    """Render the selected archive event's identity and venue details.
+
+    Args:
+        event: Normalized event fields for the dynamic session-results page.
+
+    Returns:
+        A responsive event card matching the featured weekend card style.
+    """
     return rx.card(
-        rx.hstack(
-            rx.cond(
-                event["country_flag"] != "",
-                rx.box(
-                    flag_icon(event["country_flag"], event["country"]),
-                    display="flex",
-                    align_items="center",
-                    justify_content="center",
-                    font_size="2rem",
-                    width="2.75rem",
-                    min_width="2.75rem",
-                    min_height="2.75rem",
-                ),
-                rx.fragment(),
-            ),
-            rx.vstack(
-                rx.text(
-                    event["race_name"],
-                    size="3",
-                    weight="bold",
-                    color=rx.color("gray", 12),
-                    line_height="1.3",
-                    overflow="hidden",
-                    text_overflow="ellipsis",
-                    white_space="nowrap",
-                    width="100%",
-                ),
+        rx.vstack(
+            rx.hstack(
                 rx.cond(
-                    event["circuit_name"] != "",
-                    rx.hstack(
-                        rx.text(
-                            event["circuit_name"],
-                            size="2",
-                            color=rx.color("gray", 10),
-                            line_height="1.3",
-                            overflow="hidden",
-                            text_overflow="ellipsis",
-                            white_space="nowrap",
-                            min_width="0",
-                            flex_shrink="1",
-                        ),
-                        rx.text("·", size="2", color=rx.color("gray", 9)),
-                        rx.text(
-                            event["race_date"],
-                            size="2",
-                            color=rx.color("gray", 11),
-                            white_space="nowrap",
-                            flex_shrink="0",
-                        ),
-                        align="center",
-                        spacing="1",
-                        width="100%",
+                    event["country_flag"] != "",
+                    rx.box(
+                        flag_icon(event["country_flag"], event["country"]),
+                        font_size="2rem",
+                        line_height="1",
+                        flex_shrink="0",
                     ),
-                    rx.text(
-                        event["race_date"],
-                        size="2",
-                        color=rx.color("gray", 11),
-                        white_space="nowrap",
-                    ),
+                    rx.fragment(),
                 ),
-                align="stretch",
-                spacing="1",
-                min_width="0",
-                flex="1",
+                rx.vstack(
+                    rx.text(
+                        "ARCHIVE EVENT",
+                        size="2",
+                        weight="bold",
+                        color=rx.color("accent", 11),
+                        letter_spacing="0.14em",
+                    ),
+                    rx.heading(
+                        event["race_name"],
+                        as_="h2",
+                        size="7",
+                        weight="bold",
+                        letter_spacing="-0.03em",
+                    ),
+                    align="start",
+                    spacing="1",
+                    min_width="0",
+                ),
+                rx.badge(
+                    f"ROUND {event['round']}",
+                    color_scheme="red",
+                    variant="soft",
+                    size="2",
+                    white_space="nowrap",
+                ),
+                justify="between",
+                align="center",
+                width="100%",
+                flex_wrap="wrap",
+                gap="3",
             ),
-            rx.badge(
-                f"ROUND {event['round']}",
-                color_scheme="red",
-                variant="soft",
-                size="2",
-                flex_shrink="0",
-                white_space="nowrap",
-                padding_x="3",
-                padding_y="2",
+            rx.separator(),
+            rx.hstack(
+                rx.icon("map-pin", size=20, color=rx.color("accent", 11)),
+                rx.vstack(
+                    rx.text(event["circuit_name"], weight="bold"),
+                    rx.text(
+                        f"{event['locality']}, {event['country']}",
+                        color=rx.color("gray", 11),
+                    ),
+                    align="start",
+                    spacing="1",
+                    min_width="0",
+                ),
+                align="center",
+                spacing="3",
+                width="100%",
             ),
-            align="center",
-            spacing="3",
+            rx.hstack(
+                rx.icon("calendar-days", size=20, color=rx.color("accent", 11)),
+                rx.text(event["date_range"], weight="medium"),
+                align="center",
+                spacing="3",
+                width="100%",
+            ),
+            align="stretch",
+            spacing="4",
             width="100%",
         ),
-        key=event["round"],
-        size="2",
         width="100%",
         background_color=rx.color("gray", 2),
         border_width="1px",
         border_style="solid",
         border_color=rx.color("gray", 5),
+    )
+
+
+def _past_event_card(
+    event: rx.Var[PastEvent], season: rx.Var[str]
+) -> rx.Component:
+    """Render one compact archive entry as a full-card event link."""
+    return rx.link(
+        rx.card(
+            rx.hstack(
+                rx.cond(
+                    event["country_flag"] != "",
+                    rx.box(
+                        flag_icon(event["country_flag"], event["country"]),
+                        display="flex",
+                        align_items="center",
+                        justify_content="center",
+                        font_size="2rem",
+                        width="2.75rem",
+                        min_width="2.75rem",
+                        min_height="2.75rem",
+                    ),
+                    rx.fragment(),
+                ),
+                rx.vstack(
+                    rx.text(
+                        event["race_name"],
+                        size="3",
+                        weight="bold",
+                        color=rx.color("gray", 12),
+                        line_height="1.3",
+                        overflow="hidden",
+                        text_overflow="ellipsis",
+                        white_space="nowrap",
+                        width="100%",
+                    ),
+                    rx.cond(
+                        event["circuit_name"] != "",
+                        rx.hstack(
+                            rx.text(
+                                event["circuit_name"],
+                                size="2",
+                                color=rx.color("gray", 10),
+                                line_height="1.3",
+                                overflow="hidden",
+                                text_overflow="ellipsis",
+                                white_space="nowrap",
+                                min_width="0",
+                                flex_shrink="1",
+                            ),
+                            rx.text("·", size="2", color=rx.color("gray", 9)),
+                            rx.text(
+                                event["race_date"],
+                                size="2",
+                                color=rx.color("gray", 11),
+                                white_space="nowrap",
+                                flex_shrink="0",
+                            ),
+                            align="center",
+                            spacing="1",
+                            width="100%",
+                        ),
+                        rx.text(
+                            event["race_date"],
+                            size="2",
+                            color=rx.color("gray", 11),
+                            white_space="nowrap",
+                        ),
+                    ),
+                    align="stretch",
+                    spacing="1",
+                    min_width="0",
+                    flex="1",
+                ),
+                rx.badge(
+                    f"ROUND {event['round']}",
+                    color_scheme="red",
+                    variant="soft",
+                    size="2",
+                    flex_shrink="0",
+                    white_space="nowrap",
+                    padding_x="3",
+                    padding_y="2",
+                ),
+                align="center",
+                spacing="3",
+                width="100%",
+            ),
+            size="2",
+            width="100%",
+            background_color=rx.color("gray", 2),
+            border_width="1px",
+            border_style="solid",
+            border_color=rx.color("gray", 5),
+            transition="border-color 150ms ease, transform 150ms ease",
+            _hover={
+                "border_color": rx.color("accent", 8),
+                "transform": "translateY(-1px)",
+            },
+        ),
+        href=f"/results/{season}/{event['round']}",
+        underline="none",
+        width="100%",
+        key=event["round"],
     )
 
 
@@ -324,6 +426,11 @@ def season_archive_section(
     has_events: rx.Var[bool],
 ) -> rx.Component:
     """Render a season's past races as a compact, vertically flowing list."""
+
+    def render_event(event: rx.Var[PastEvent]) -> rx.Component:
+        """Bind the archive season to one event card's destination."""
+        return _past_event_card(event, season)
+
     return rx.vstack(
         rx.heading(f"{season} Season archive", as_="h2", size="5"),
         rx.cond(
@@ -335,7 +442,7 @@ def season_archive_section(
                 rx.cond(
                     has_events,
                     rx.vstack(
-                        rx.foreach(events, _past_event_card),
+                        rx.foreach(events, render_event),
                         align="stretch",
                         spacing="2",
                         width="100%",
