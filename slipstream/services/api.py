@@ -2,15 +2,21 @@
 
 from datetime import date, datetime, time, timezone
 from functools import lru_cache
+from math import isfinite
 from typing import Any, TypedDict
 
 # FastF1 provides the Ergast client used to retrieve calendars and standings.
 import fastf1
 import fastf1.plotting
+import pandas as pd
 from fastf1.core import Session
 from fastf1.ergast import Ergast
 
-from .flags import flag_for_circuit_country, flag_for_nationality
+from .flags import (
+    flag_for_circuit_country,
+    flag_for_driver_country_code,
+    flag_for_nationality,
+)
 
 # Avoid reusing cached results when schedule or standings data is requested.
 fastf1.Cache.set_disabled()
@@ -58,6 +64,54 @@ class PastEvent(TypedDict):
     circuit_name: str
     country: str
     country_flag: str
+
+
+class SessionOption(TypedDict):
+    """One session in an event's published weekend schedule."""
+
+    code: str
+    name: str
+
+
+class EventDetails(TypedDict):
+    """Display-ready details and available sessions for one event."""
+
+    season: str
+    round: str
+    race_name: str
+    race_date: str
+    circuit_name: str
+    locality: str
+    country: str
+    country_flag: str
+    date_range: str
+    sessions: list[SessionOption]
+
+
+class DriverClassification(TypedDict):
+    """One normalized driver's result in a Formula 1 session."""
+
+    position: str
+    given_name: str
+    family_name: str
+    country_code: str
+    nationality: str
+    country_flag: str
+    team: str
+    team_color: str
+    time: str
+
+
+# Keep the calendar's public session names and FastF1 identifiers together.
+EVENT_SESSION_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("FirstPractice", "FP1", "Practice 1"),
+    ("SecondPractice", "FP2", "Practice 2"),
+    ("ThirdPractice", "FP3", "Practice 3"),
+    ("SprintQualifying", "SQ", "Sprint Qualifying"),
+    ("SprintShootout", "SS", "Sprint Shootout"),
+    ("Sprint", "S", "Sprint"),
+    ("Qualifying", "Q", "Qualifying"),
+)
 
 
 def get_available_seasons(start_year: int = 1950) -> list[str]:
@@ -177,6 +231,402 @@ def get_past_events(
             dated_events, key=lambda item: item[0], reverse=True
         )
     ]
+
+
+def get_event_details(
+    season: int | str, round_number: int | str
+) -> EventDetails | None:
+    """Return one event's display fields and its scheduled sessions.
+
+    Args:
+        season: Championship season containing the event.
+        round_number: Event round in that season.
+
+    Returns:
+        Normalized event details, or ``None`` when the route does not match an
+        event in the published schedule.
+    """
+    parsed_season: int | None = parse_integer(season)
+    parsed_round: int | None = parse_integer(round_number)
+    if (
+        parsed_season is None
+        or parsed_round is None
+        or parsed_season < 1950
+        or parsed_round < 1
+    ):
+        return None
+
+    response: list[dict[str, Any]] = ergast.get_race_schedule(
+        season=parsed_season,
+        round=parsed_round,
+        result_type="raw",
+        limit=1,
+    )
+    race: dict[str, Any] | None = next(
+        (
+            row
+            for row in response
+            if parse_integer(row.get("round")) == parsed_round
+        ),
+        None,
+    )
+    if race is None:
+        return None
+
+    race_name = format_value(race.get("raceName"))
+    race_date = parse_race_date(race.get("date"))
+    if not race_name or race_date is None:
+        return None
+
+    circuit: dict[str, Any] = race.get("Circuit") or {}
+    location: dict[str, Any] = circuit.get("Location") or {}
+    country = format_value(location.get("country"))
+
+    scheduled: list[tuple[date, bool, str, int, SessionOption]] = []
+    session_dates: list[date] = []
+    sprint_qualifying_added = False
+    for order, (field, code, label) in enumerate(EVENT_SESSION_FIELDS):
+        raw_session: object = race.get(field)
+        if _is_missing(raw_session) or (
+            isinstance(raw_session, (dict, str)) and not raw_session
+        ):
+            continue
+
+        # Some older schedule responses contain dates as strings rather than
+        # session dictionaries; include the published option in either form.
+        session_data: dict[str, Any] = (
+            raw_session if isinstance(raw_session, dict) else {}
+        )
+        session_date = parse_race_date(
+            session_data.get("date") if session_data else raw_session
+        )
+        session_date = session_date or race_date
+        if session_date > race_date:
+            continue
+
+        if field in ("SprintQualifying", "SprintShootout"):
+            if sprint_qualifying_added:
+                continue
+            sprint_qualifying_added = True
+
+        session_time = format_session_time(session_data.get("time"))
+        scheduled.append(
+            (
+                session_date,
+                session_time == "TBD",
+                session_time,
+                order,
+                {"code": code, "name": label},
+            )
+        )
+        session_dates.append(session_date)
+
+    # Race is a guaranteed selector option, even when the schedule only has a
+    # date and omits the optional session start time.
+    race_time = format_session_time(race.get("time"))
+    scheduled.append(
+        (
+            race_date,
+            race_time == "TBD",
+            race_time,
+            len(EVENT_SESSION_FIELDS),
+            {"code": "R", "name": "Race"},
+        )
+    )
+    session_dates.append(race_date)
+    session_options: list[SessionOption] = [
+        option
+        for _, _, _, _, option in sorted(
+            scheduled, key=lambda item: item[:4]
+        )
+    ]
+
+    start_date = min(session_dates, default=race_date)
+    return {
+        "season": str(parsed_season),
+        "round": str(parsed_round),
+        "race_name": race_name,
+        "race_date": race_date.strftime("%d %b %Y"),
+        "circuit_name": format_value(circuit.get("circuitName")),
+        "locality": format_value(location.get("locality")),
+        "country": country,
+        "country_flag": flag_for_circuit_country(country),
+        "date_range": (
+            f"{start_date.strftime('%d %b')} – "
+            f"{race_date.strftime('%d %b %Y')}"
+        ),
+        "sessions": session_options,
+    }
+
+
+def get_session_classification(
+    season: int | str,
+    round_number: int | str,
+    session_code: str,
+) -> list[DriverClassification]:
+    """Load and normalize the selected session's driver classification.
+
+    Practice sessions are ordered by each driver's fastest valid lap. Other
+    sessions retain FastF1's classified position order and expose the most
+    relevant session time for each driver.
+
+    Args:
+        season: Championship season containing the event.
+        round_number: Event round in that season.
+        session_code: FastF1 session identifier, such as ``"FP1"`` or ``"R"``.
+
+    Returns:
+        Driver classification rows ordered for display. An empty list means
+        the session loaded but did not publish result rows.
+
+    Raises:
+        ValueError: If a route value or session identifier is invalid.
+        Exception: Propagates FastF1 loading errors for the page to report.
+    """
+    parsed_season: int | None = parse_integer(season)
+    parsed_round: int | None = parse_integer(round_number)
+    allowed_codes: set[str] = {
+        "FP1",
+        "FP2",
+        "FP3",
+        "SQ",
+        "SS",
+        "S",
+        "Q",
+        "R",
+    }
+    if parsed_season is None or parsed_round is None:
+        raise ValueError("A numeric season and round are required.")
+    if session_code not in allowed_codes:
+        raise ValueError("The requested session is not supported.")
+
+    practice_session: bool = session_code in {"FP1", "FP2", "FP3"}
+    # FastF1 needs lap data for practice classification. Other sessions only
+    # need their result table, so skip the larger lap and telemetry payloads.
+    session: Session = fastf1.get_session(parsed_season, parsed_round, session_code)
+    session.load(
+        laps=practice_session,
+        telemetry=False,
+        weather=False,
+        messages=False,
+    )
+    result_rows: list[dict[str, Any]] = session.results.to_dict(orient="records")
+    if not result_rows:
+        return []
+
+    # F1's timing feed can leave CountryCode blank. Jolpica has the matching
+    # event driver nationalities; flags fall back to the timing code if needed.
+    try:
+        driver_nationalities = get_driver_nationalities(
+            parsed_season, parsed_round
+        )
+    except Exception:
+        driver_nationalities = {}
+
+    fastest_laps: dict[str, Any] = {}
+    if practice_session:
+        lap_results = session.laps
+        if "Deleted" in lap_results.columns:
+            deleted_laps = lap_results["Deleted"].map(
+                lambda value: not _is_missing(value) and bool(value)
+            )
+            lap_results = lap_results[~deleted_laps]
+        if not lap_results.empty:
+            for lap in lap_results[["Driver", "LapTime"]].to_dict(orient="records"):
+                driver_code = format_value(lap.get("Driver"))
+                lap_time = lap.get("LapTime")
+                if not driver_code or _is_missing(lap_time):
+                    continue
+                current_best = fastest_laps.get(driver_code)
+                if current_best is None or lap_time < current_best:
+                    fastest_laps[driver_code] = lap_time
+
+    def fastest_lap_sort_key(row: dict[str, Any]) -> tuple[bool, float, str]:
+        """Place timed practice results first, fastest lap before slower laps."""
+        lap_time = fastest_laps.get(_classification_driver_code(row))
+        seconds = _time_seconds(lap_time)
+        return (
+            seconds is None,
+            seconds if seconds is not None else 0.0,
+            _classification_driver_code(row),
+        )
+
+    def classified_sort_key(
+        row_and_index: tuple[int, dict[str, Any]],
+    ) -> tuple[bool, float, int]:
+        """Keep the published numeric result order, with unclassified rows last."""
+        index, row = row_and_index
+        position = _position_number(
+            _first_present(row.get("Position"), row.get("ClassifiedPosition"))
+        )
+        return position is None, position if position is not None else 0.0, index
+
+    if practice_session:
+        ordered_rows = sorted(result_rows, key=fastest_lap_sort_key)
+    else:
+        ordered_rows = [
+            row
+            for _, row in sorted(
+                enumerate(result_rows), key=classified_sort_key
+            )
+        ]
+
+    classification: list[DriverClassification] = []
+    for index, row in enumerate(ordered_rows, start=1):
+        driver_code = _classification_driver_code(row)
+        team = format_value(row.get("TeamName"))
+        team_id = format_value(row.get("TeamId"))
+        team_color = get_team_color(
+            [{"constructorId": team_id, "name": team}],
+            row.get("TeamColor"),
+            season=parsed_season,
+            round_number=parsed_round,
+        )
+        country_code = format_value(row.get("CountryCode"))
+        nationality = driver_nationalities.get(
+            format_value(row.get("DriverId")), country_code
+        )
+        given_name = format_value(row.get("FirstName"))
+        family_name = format_value(row.get("LastName"))
+        if not given_name and not family_name:
+            given_name, _, family_name = format_value(row.get("FullName")).partition(
+                " "
+            )
+
+        if practice_session:
+            fastest_lap = fastest_laps.get(driver_code)
+            position = str(index) if fastest_lap is not None else "—"
+            result_time = _format_classification_time(fastest_lap)
+        else:
+            position = _format_position(
+                _first_present(row.get("Position"), row.get("ClassifiedPosition"))
+            ) or "—"
+            result_time = _session_result_time(row, session_code)
+
+        classification.append(
+            {
+                "position": position,
+                "given_name": given_name,
+                "family_name": family_name,
+                "country_code": country_code,
+                "nationality": nationality,
+                "country_flag": flag_for_nationality(nationality)
+                or flag_for_driver_country_code(country_code),
+                "team": team,
+                "team_color": team_color,
+                "time": result_time or "—",
+            }
+        )
+
+    return classification
+
+
+def _is_missing(value: object) -> bool:
+    """Report missing pandas and Python scalar values consistently."""
+    if value is None:
+        return True
+    try:
+        return bool(pd.isna(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def _classification_driver_code(row: dict[str, Any]) -> str:
+    """Return FastF1's short driver code, falling back to the car number."""
+    return format_value(row.get("Abbreviation")) or format_value(
+        row.get("DriverNumber")
+    )
+
+
+@lru_cache(maxsize=128)
+def get_driver_nationalities(season: int, round_number: int) -> dict[str, str]:
+    """Return driver nationalities for one event, keyed by driver identifier."""
+    response: list[dict[str, Any]] = ergast.get_driver_info(
+        season=season,
+        round=round_number,
+        result_type="raw",
+        limit=1000,
+    )
+    return {
+        format_value(driver.get("driverId")): format_value(
+            driver.get("nationality")
+        )
+        for driver in response
+        if format_value(driver.get("driverId"))
+    }
+
+
+def _first_present(*values: object) -> object | None:
+    """Return the first non-missing scalar from an API result row."""
+    return next((value for value in values if not _is_missing(value)), None)
+
+
+def _position_number(value: object) -> float | None:
+    """Parse a positive numeric classification position when one is present."""
+    if _is_missing(value):
+        return None
+    try:
+        position = float(value)
+    except (TypeError, ValueError):
+        return None
+    return position if isfinite(position) and position > 0 else None
+
+
+def _format_position(value: object) -> str:
+    """Remove floating point formatting from whole-number result positions."""
+    position = _position_number(value)
+    if position is not None:
+        return str(int(position)) if position.is_integer() else str(position)
+    if _is_missing(value):
+        return ""
+    return format_value(value)
+
+
+def _time_seconds(value: object) -> float | None:
+    """Convert a time-like value to seconds for sorting practice laps."""
+    if _is_missing(value):
+        return None
+    total_seconds = getattr(value, "total_seconds", None)
+    if callable(total_seconds):
+        try:
+            seconds = float(total_seconds())
+            return seconds if isfinite(seconds) else None
+        except (TypeError, ValueError, OverflowError):
+            return None
+    return None
+
+
+def _format_classification_time(value: object) -> str:
+    """Format a time duration as minutes and seconds with milliseconds."""
+    seconds = _time_seconds(value)
+    if seconds is None:
+        return "" if _is_missing(value) else format_value(value)
+
+    sign = "-" if seconds < 0 else ""
+    whole_seconds = abs(seconds)
+    minutes = int(whole_seconds // 60)
+    remainder = whole_seconds - (minutes * 60)
+    if whole_seconds >= 3600:
+        hours = int(whole_seconds // 3600)
+        minutes = int((whole_seconds - (hours * 3600)) // 60)
+        return f"{sign}{hours}:{minutes:02d}:{whole_seconds % 60:06.3f}"
+    return f"{sign}{minutes}:{remainder:06.3f}"
+
+
+def _session_result_time(row: dict[str, Any], session_code: str) -> str:
+    """Choose the most useful time from a qualifying, sprint, or race result."""
+    if session_code in {"Q", "SQ", "SS"}:
+        for segment in ("Q3", "Q2", "Q1"):
+            value = row.get(segment)
+            if not _is_missing(value):
+                return _format_classification_time(value)
+
+    result_time = row.get("Time")
+    if not _is_missing(result_time):
+        return _format_classification_time(result_time)
+
+    # A retirement or lapped status is more useful than a blank value.
+    return format_value(row.get("Status"))
 
 
 def get_race_weekend(
@@ -503,8 +953,10 @@ def get_team_color(
             ]
         )
     for color in api_colors:
-        if color:
-            formatted_color: str = format_value(color)
+        if _is_missing(color):
+            continue
+        formatted_color: str = format_value(color)
+        if formatted_color:
             return (
                 formatted_color
                 if formatted_color.startswith("#")
@@ -519,7 +971,7 @@ def get_team_color(
                 constructor.get("name"),
                 constructor.get("constructorId"),
             ):
-                if not team_name:
+                if _is_missing(team_name) or not format_value(team_name):
                     continue
                 dynamic_color: str = get_session_team_color(
                     format_value(team_name), season, round_number
@@ -622,6 +1074,6 @@ def format_value(value: object) -> str:
         An empty string for missing data, otherwise a normalized string.
     """
     # Keep absent values empty and remove the decimal from whole-number floats.
-    if value is None:
+    if _is_missing(value):
         return ""
     return str(value).removesuffix(".0")
