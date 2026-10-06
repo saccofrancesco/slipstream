@@ -83,7 +83,7 @@ def _classification_row(entry: rx.Var[DriverClassification]) -> rx.Component:
                 ),
                 rx.vstack(
                     rx.text(
-                        "TIME",
+                        entry["time_label"],
                         size="1",
                         weight="bold",
                         color=rx.color("gray", 10),
