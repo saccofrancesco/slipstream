@@ -5,6 +5,7 @@ import reflex as rx
 from slipstream.services import DriverClassification, SessionOption
 
 from .flag import flag_icon
+from .layout import status_card
 from .standing import podium_styles
 
 
@@ -120,35 +121,6 @@ def _classification_row(entry: rx.Var[DriverClassification]) -> rx.Component:
     )
 
 
-def _classification_message(title: str, message: rx.Var[str] | str) -> rx.Component:
-    """Render a loading or unavailable result in the shared card style."""
-    return rx.card(
-        rx.hstack(
-            rx.box(
-                rx.icon("flag", size=20, color=rx.color("accent", 11)),
-                padding="3",
-                border_radius="full",
-                background_color=rx.color("accent", 3),
-            ),
-            rx.vstack(
-                rx.heading(title, size="4", weight="bold"),
-                rx.text(message, color=rx.color("gray", 11), line_height="1.5"),
-                align="start",
-                spacing="1",
-                width="100%",
-            ),
-            align="center",
-            spacing="4",
-            width="100%",
-        ),
-        width="100%",
-        background_color=rx.color("gray", 2),
-        border_width="1px",
-        border_style="solid",
-        border_color=rx.color("gray", 5),
-    )
-
-
 def session_classification_section(
     sessions: rx.Var[list[SessionOption]],
     selected_session: rx.Var[str],
@@ -198,12 +170,12 @@ def session_classification_section(
         ),
         rx.cond(
             loading,
-            _classification_message(
+            status_card(
                 "Loading session results", "Loading the selected classification…"
             ),
             rx.cond(
                 error != "",
-                _classification_message("Session results unavailable", error),
+                status_card("Session results unavailable", error),
                 rx.cond(
                     has_classification,
                     rx.vstack(
@@ -234,7 +206,7 @@ def session_classification_section(
                         spacing="3",
                         width="100%",
                     ),
-                    _classification_message(
+                    status_card(
                         "No classification available",
                         "The timing feed has not published results for this session.",
                     ),
