@@ -1,5 +1,6 @@
 """Fetch and normalize Formula 1 schedules and championship standings."""
 
+import re
 from datetime import date, datetime, time, timezone
 from functools import lru_cache
 from math import isfinite
@@ -89,7 +90,7 @@ class EventDetails(TypedDict):
 
 
 class DriverClassification(TypedDict):
-    """One normalized driver's result in a Formula 1 session."""
+    """One driver's result with a display value and its timing label."""
 
     position: str
     given_name: str
@@ -100,6 +101,7 @@ class DriverClassification(TypedDict):
     team: str
     team_color: str
     time: str
+    time_label: str
 
 
 # Keep the calendar's public session names and FastF1 identifiers together.
@@ -367,8 +369,8 @@ def get_session_classification(
     """Load and normalize the selected session's driver classification.
 
     Practice sessions are ordered by each driver's fastest valid lap. Other
-    sessions retain FastF1's classified position order and expose the most
-    relevant session time for each driver.
+    sessions retain FastF1's classified position order. Timings are normalized
+    against the first classified driver where comparable data exists.
 
     Args:
         season: Championship season containing the event.
@@ -471,6 +473,30 @@ def get_session_classification(
             )
         ]
 
+    # Before 2023, Sprint Qualifying was a race-like session. Its result rows
+    # contain total race times instead of Q1/Q2/Q3 lap times.
+    qualifying_session: bool = session_code in {"Q", "SS"} or (
+        session_code == "SQ"
+        and any(
+            not _is_missing(row.get(segment))
+            for row in ordered_rows
+            for segment in ("Q1", "Q2", "Q3")
+        )
+    )
+    leader_row = ordered_rows[0]
+    leader_lap_seconds: float | None = None
+    leader_race_seconds: float | None = None
+    leader_laps: int | None = None
+    if practice_session:
+        leader_lap_seconds = _time_seconds(
+            fastest_laps.get(_classification_driver_code(leader_row))
+        )
+    elif qualifying_session:
+        leader_lap_seconds = _time_seconds(leader_row.get("Q3"))
+    else:
+        leader_race_seconds = _time_seconds(leader_row.get("Time"))
+        leader_laps = _lap_count(leader_row.get("Laps"))
+
     classification: list[DriverClassification] = []
     for index, row in enumerate(ordered_rows, start=1):
         driver_code = _classification_driver_code(row)
@@ -496,12 +522,21 @@ def get_session_classification(
         if practice_session:
             fastest_lap = fastest_laps.get(driver_code)
             position = str(index) if fastest_lap is not None else "—"
-            result_time = _format_classification_time(fastest_lap)
+            time_label, result_time = _lap_timing(
+                fastest_lap, leader_lap_seconds, index == 1
+            )
         else:
             position = _format_position(
                 _first_present(row.get("Position"), row.get("ClassifiedPosition"))
             ) or "—"
-            result_time = _session_result_time(row, session_code)
+            if qualifying_session:
+                time_label, result_time = _qualifying_timing(
+                    row, position, leader_lap_seconds
+                )
+            else:
+                time_label, result_time = _race_timing(
+                    row, index == 1, leader_race_seconds, leader_laps
+                )
 
         classification.append(
             {
@@ -515,6 +550,7 @@ def get_session_classification(
                 "team": team,
                 "team_color": team_color,
                 "time": result_time or "—",
+                "time_label": time_label,
             }
         )
 
@@ -613,20 +649,141 @@ def _format_classification_time(value: object) -> str:
     return f"{sign}{minutes}:{remainder:06.3f}"
 
 
-def _session_result_time(row: dict[str, Any], session_code: str) -> str:
-    """Choose the most useful time from a qualifying, sprint, or race result."""
-    if session_code in {"Q", "SQ", "SS"}:
-        for segment in ("Q3", "Q2", "Q1"):
-            value = row.get(segment)
-            if not _is_missing(value):
-                return _format_classification_time(value)
+def _format_gap(seconds: float) -> str:
+    """Format a nonnegative leader gap to the nearest millisecond."""
+    milliseconds = round(seconds * 1000)
+    if milliseconds < 0:
+        return ""
+    minutes, remainder = divmod(milliseconds, 60_000)
+    whole_seconds, fractional = divmod(remainder, 1000)
+    return (
+        f"+{minutes}:{whole_seconds:02d}.{fractional:03d}"
+        if minutes
+        else f"+{whole_seconds}.{fractional:03d}"
+    )
 
-    result_time = row.get("Time")
-    if not _is_missing(result_time):
-        return _format_classification_time(result_time)
 
-    # A retirement or lapped status is more useful than a blank value.
-    return format_value(row.get("Status"))
+def _lap_timing(
+    lap: object, leader_seconds: float | None, is_first: bool
+) -> tuple[str, str]:
+    """Show a practice lap or its gap from the first driver's fastest lap."""
+    lap_seconds = _time_seconds(lap)
+    if lap_seconds is None:
+        return "LAP TIME", ""
+    if not is_first and leader_seconds is not None:
+        gap = _format_gap(lap_seconds - leader_seconds)
+        if gap:
+            return "GAP TO P1", gap
+    return "LAP TIME", _format_classification_time(lap)
+
+
+def _best_qualifying_lap(row: dict[str, Any]) -> object | None:
+    """Use the latest qualifying segment in which this driver set a time."""
+    return _first_present(row.get("Q3"), row.get("Q2"), row.get("Q1"))
+
+
+def _qualifying_timing(
+    row: dict[str, Any], position: str, leader_q3_seconds: float | None
+) -> tuple[str, str]:
+    """Compare top-ten Q3 laps and retain actual laps below tenth place."""
+    position_number = _position_number(position)
+    q3_lap = row.get("Q3")
+    if (
+        position_number is not None
+        and 1 < position_number <= 10
+        and leader_q3_seconds is not None
+    ):
+        q3_seconds = _time_seconds(q3_lap)
+        if q3_seconds is not None:
+            gap = _format_gap(q3_seconds - leader_q3_seconds)
+            if gap:
+                return "GAP TO P1", gap
+
+    lap = _best_qualifying_lap(row)
+    return "LAP TIME", _format_classification_time(lap)
+
+
+def _lap_count(value: object) -> int | None:
+    """Read a valid whole number of completed race laps."""
+    if _is_missing(value):
+        return None
+    try:
+        laps = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not isfinite(laps) or laps < 0 or not laps.is_integer():
+        return None
+    return int(laps)
+
+
+def _race_outcome(row: dict[str, Any]) -> str:
+    """Map a non-finisher's FastF1 status to a short result label."""
+    status = format_value(row.get("Status")).strip().lower()
+    classified = format_value(row.get("ClassifiedPosition")).strip().upper()
+    if "did not start" in status or "not started" in status or status == "dns":
+        return "DNS"
+    if classified == "D" or "disqualif" in status:
+        return "DSQ"
+    if classified == "W" or "withdraw" in status:
+        return "WD"
+    if classified == "E" or "excluded" in status:
+        return "EXC"
+    if classified == "F" or "failed to qualify" in status:
+        return "DNQ"
+    if status in {"finished", "lapped"} or re.fullmatch(
+        r"\+\s*\d+\s*laps?", status
+    ):
+        return ""
+    if classified == "R" or status:
+        return "DNF"
+    if classified == "N":
+        return "NC"
+    return ""
+
+
+def _race_timing(
+    row: dict[str, Any],
+    is_first: bool,
+    leader_seconds: float | None,
+    leader_laps: int | None,
+) -> tuple[str, str]:
+    """Show the winner's total time, elapsed gaps, lap gaps, or outcomes."""
+    outcome = _race_outcome(row)
+    if outcome:
+        return "RESULT", outcome
+
+    row_time_seconds = _time_seconds(row.get("Time"))
+    if is_first:
+        return "TOTAL TIME", _format_classification_time(row.get("Time"))
+
+    laps = _lap_count(row.get("Laps"))
+    if leader_laps is not None and laps is not None and laps < leader_laps:
+        difference = leader_laps - laps
+        return "GAP TO P1", f"+{difference} {'Lap' if difference == 1 else 'Laps'}"
+
+    # Older feeds may only publish the lapped status and omit completed laps.
+    status = format_value(row.get("Status")).strip()
+    lap_status = re.fullmatch(r"\+\s*(\d+)\s*laps?", status, re.IGNORECASE)
+    if lap_status:
+        difference = int(lap_status.group(1))
+        return "GAP TO P1", f"+{difference} {'Lap' if difference == 1 else 'Laps'}"
+
+    if status.lower() == "lapped":
+        return "GAP TO P1", ""
+
+    if row_time_seconds is not None and leader_seconds is not None:
+        # Live timing supplies the winner's total time but already gives the
+        # remaining finishers' gaps; older result tables can hold totals for
+        # everyone. The smaller value is therefore already a leader gap.
+        elapsed_gap = (
+            row_time_seconds
+            if row_time_seconds < leader_seconds
+            else row_time_seconds - leader_seconds
+        )
+        gap = _format_gap(elapsed_gap)
+        if gap:
+            return "GAP TO P1", gap
+    return "GAP TO P1", ""
 
 
 def get_race_weekend(
