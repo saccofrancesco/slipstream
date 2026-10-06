@@ -5,9 +5,9 @@ from collections.abc import AsyncGenerator
 
 import reflex as rx
 
-from slipstream.components import container, navbar, page_header
+from slipstream.components import container, navbar
 from slipstream.components.classification import session_classification_section
-from slipstream.components.weekend import event_summary_card, weekend_status_card
+from slipstream.components.weekend import event_header, weekend_status_card
 from slipstream.services import (
     DriverClassification,
     EventDetails,
@@ -139,18 +139,13 @@ class EventState(rx.State):
             )
 
 
-@rx.page("/results/[season]/[round]", "Session results", on_load=EventState.load_event)
+@rx.page("/results/[season]/[round]", "Grand Prix results", on_load=EventState.load_event)
 def event_results() -> rx.Component:
     """Render one archived event and the selected session classification."""
     return rx.vstack(
         navbar(active_section="results"),
         container(
             rx.vstack(
-                page_header(
-                    "Formula 1 archive",
-                    "Session results",
-                    "Choose a session to view its driver classification.",
-                ),
                 rx.link(
                     rx.hstack(
                         rx.icon("arrow-left", size=16),
@@ -162,11 +157,12 @@ def event_results() -> rx.Component:
                     underline="none",
                     color=rx.color("gray", 11),
                     _hover={"color": rx.color("accent", 11)},
+                    padding_top="7",
                 ),
                 rx.cond(
                     EventState.has_event,
                     rx.vstack(
-                        event_summary_card(EventState.event),
+                        event_header(EventState.event),
                         session_classification_section(
                             EventState.sessions,
                             EventState.selected_session,
