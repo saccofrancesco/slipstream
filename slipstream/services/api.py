@@ -123,7 +123,7 @@ def get_available_seasons(start_year: int = 1950) -> list[str]:
         start_year: Earliest season to include.
 
     Returns:
-        Season years formatted as strings for the season selector.
+        Season years formatted as strings for championship requests.
     """
     # The raw Ergast response is a list of records; keep that boundary typed
     # before extracting the small string-only shape used by page state.
@@ -143,13 +143,13 @@ def get_available_seasons(start_year: int = 1950) -> list[str]:
 
 
 def get_completed_races(season: int | str) -> list[dict[str, str]]:
-    """Return completed races for a season as round selector options.
+    """Return completed races for a season in calendar order.
 
     Args:
         season: Season year selected by the user.
 
     Returns:
-        Race options with round numbers and display labels, in calendar order.
+        Race records with round numbers and display labels.
     """
     response: list[dict[str, Any]] = ergast.get_race_schedule(
         season=int(season), result_type="raw", limit=1000
@@ -805,14 +805,9 @@ def get_race_weekend(
     current_date: date = today or date.today()
     # Sprint qualifying appears under two Ergast field names. Both map to one
     # display label and are deduplicated when sessions are grouped by date.
-    session_fields: tuple[tuple[str, str], ...] = (
-        ("FirstPractice", "Practice 1"),
-        ("SecondPractice", "Practice 2"),
-        ("ThirdPractice", "Practice 3"),
-        ("SprintQualifying", "Sprint Qualifying"),
-        ("SprintShootout", "Sprint Qualifying"),
-        ("Sprint", "Sprint"),
-        ("Qualifying", "Qualifying"),
+    session_fields: tuple[tuple[str, str], ...] = tuple(
+        (field, "Sprint Qualifying" if field == "SprintShootout" else label)
+        for field, _, label in EVENT_SESSION_FIELDS
     )
     selected: tuple[date, date, dict[str, Any]] | None = None
     selected_season: int = current_date.year
@@ -1013,6 +1008,8 @@ def get_driver_standings(
     # Extract the raw rows and build the smaller shape consumed by the UI.
     rows: list[dict[str, Any]] = response[0].get("DriverStandings", [])
     standings: list[dict[str, str]] = []
+    parsed_season: int | None = parse_integer(season)
+    parsed_round: int | None = parse_integer(round)
     for row in rows:
         driver: dict[str, Any] = row.get("Driver", {})
         nationality = format_value(driver.get("nationality"))
@@ -1025,8 +1022,8 @@ def get_driver_standings(
         team_color: str = get_team_color(
             constructors,
             row.get("teamColor") or row.get("TeamColor"),
-            season=parse_integer(season),
-            round_number=parse_integer(round),
+            season=parsed_season,
+            round_number=parsed_round,
         )
         standings.append(
             {
@@ -1065,6 +1062,8 @@ def get_constructor_standings(
     # Flatten each response row and attach the matching team color.
     rows: list[dict[str, Any]] = response[0].get("ConstructorStandings", [])
     standings: list[dict[str, str]] = []
+    parsed_season: int | None = parse_integer(season)
+    parsed_round: int | None = parse_integer(round)
     for row in rows:
         constructor: dict[str, Any] = row.get("Constructor") or {}
         standings.append(
@@ -1074,8 +1073,8 @@ def get_constructor_standings(
                 "points": format_value(row.get("points")),
                 "team_color": get_team_color(
                     [constructor],
-                    season=parse_integer(season),
-                    round_number=parse_integer(round),
+                    season=parsed_season,
+                    round_number=parsed_round,
                 ),
             }
         )
