@@ -83,6 +83,52 @@ CIRCUIT_COUNTRY_CODES: dict[str, str] = {
     "united states": "US",
 }
 
+# FastF1 uses its own three-letter driver country codes. Map common Formula 1
+# codes to ISO alpha-2 values so the existing flag icon can render them.
+DRIVER_COUNTRY_CODES: dict[str, str] = {
+    "ARG": "AR",
+    "AUS": "AU",
+    "AUT": "AT",
+    "BEL": "BE",
+    "BRA": "BR",
+    "CAN": "CA",
+    "CHL": "CL",
+    "CHN": "CN",
+    "COL": "CO",
+    "CRO": "HR",
+    "CZE": "CZ",
+    "DEN": "DK",
+    "FIN": "FI",
+    "FRA": "FR",
+    "GBR": "GB",
+    "GER": "DE",
+    "HUN": "HU",
+    "IND": "IN",
+    "IRL": "IE",
+    "ITA": "IT",
+    "JPN": "JP",
+    "MAL": "MY",
+    "MEX": "MX",
+    "MON": "MC",
+    "NED": "NL",
+    "NZL": "NZ",
+    "POL": "PL",
+    "POR": "PT",
+    "RUS": "RU",
+    "SAU": "SA",
+    "SIN": "SG",
+    "ESP": "ES",
+    "SUI": "CH",
+    "SWE": "SE",
+    "THA": "TH",
+    "TUR": "TR",
+    "UAE": "AE",
+    "USA": "US",
+    "URU": "UY",
+    "VEN": "VE",
+    "ZAF": "ZA",
+}
+
 
 def _flag_for_code(country_code: str) -> str:
     """Encode a two-letter country code as Unicode regional indicators."""
@@ -92,6 +138,12 @@ def _flag_for_code(country_code: str) -> str:
 def flag_for_nationality(nationality: str) -> str:
     """Return a driver's national flag, or empty text for unknown labels."""
     code = NATIONALITY_COUNTRY_CODES.get(nationality.strip().casefold())
+    return _flag_for_code(code) if code else ""
+
+
+def flag_for_driver_country_code(country_code: str) -> str:
+    """Return a driver's flag from FastF1's three-letter country code."""
+    code = DRIVER_COUNTRY_CODES.get(country_code.strip().upper())
     return _flag_for_code(code) if code else ""
 
 
