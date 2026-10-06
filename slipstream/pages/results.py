@@ -5,11 +5,10 @@ from collections.abc import AsyncGenerator
 from datetime import date
 
 import reflex as rx
-from slipstream.components import container, navbar, page_header
+from slipstream.components import container, navbar, page_header, status_card
 from slipstream.components.weekend import (
     race_weekend_card,
     season_archive_section,
-    weekend_status_card,
 )
 from slipstream.services import (
     PastEvent,
@@ -152,12 +151,12 @@ def results() -> rx.Component:
                 # an empty result has its own explanatory status card.
                 rx.cond(
                     ResultsState.loading,
-                    weekend_status_card(
+                    status_card(
                         "Loading the race weekend", "Checking the Formula 1 calendar…"
                     ),
                     rx.cond(
                         ResultsState.error != "",
-                        weekend_status_card(
+                        status_card(
                             "Weekend overview unavailable", ResultsState.error
                         ),
                         rx.cond(
@@ -167,7 +166,7 @@ def results() -> rx.Component:
                                 ResultsState.schedule_days,
                                 ResultsState.schedule_column_count,
                             ),
-                            weekend_status_card(
+                            status_card(
                                 "No upcoming race is scheduled",
                                 "The next Grand Prix weekend will appear here when its calendar is published.",
                             ),

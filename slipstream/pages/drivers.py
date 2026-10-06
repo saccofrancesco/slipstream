@@ -8,12 +8,7 @@ import reflex as rx
 
 # Reuse shared presentation components and the driver standings service.
 from slipstream.components import container, navbar, page_header
-from slipstream.components.championship import (
-    leaderboard_section,
-    loading_panel,
-    message_panel,
-    podium_section,
-)
+from slipstream.components.championship import championship_section
 from slipstream.services import (
     get_available_seasons,
     get_completed_races,
@@ -95,20 +90,6 @@ def drivers() -> rx.Component:
     Returns:
         A page with the latest driver standings snapshot.
     """
-    # Combine the podium and remaining rows into one content column.
-    standings_content: rx.Component = rx.vstack(
-        podium_section(DriversState.podium_standings, is_driver=True),
-        rx.cond(
-            DriversState.has_remaining_standings,
-            leaderboard_section(DriversState.remaining_standings, is_driver=True),
-            rx.fragment(),
-        ),
-        align="stretch",
-        spacing="7",
-        width="100%",
-        padding_bottom="8",
-    )
-
     return rx.vstack(
         navbar(active_section="drivers"),
         container(
@@ -118,19 +99,14 @@ def drivers() -> rx.Component:
                     "Drivers’ Championship",
                     "Latest driver championship standings.",
                 ),
-                # Show loading and errors before deciding whether standings are available.
-                rx.cond(
+                championship_section(
+                    DriversState.podium_standings,
+                    DriversState.remaining_standings,
+                    DriversState.has_remaining_standings,
+                    DriversState.has_standings,
                     DriversState.loading,
-                    loading_panel(),
-                    rx.cond(
-                        DriversState.error != "",
-                        message_panel(DriversState.error),
-                        rx.cond(
-                            DriversState.has_standings,
-                            standings_content,
-                            message_panel("No standings are available yet."),
-                        ),
-                    ),
+                    DriversState.error,
+                    is_driver=True,
                 ),
                 align="stretch",
                 spacing="6",

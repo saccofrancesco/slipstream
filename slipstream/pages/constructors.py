@@ -8,12 +8,7 @@ import reflex as rx
 
 # Reuse shared presentation components and the constructor standings service.
 from slipstream.components import container, navbar, page_header
-from slipstream.components.championship import (
-    leaderboard_section,
-    loading_panel,
-    message_panel,
-    podium_section,
-)
+from slipstream.components.championship import championship_section
 from slipstream.services import (
     get_available_seasons,
     get_completed_races,
@@ -97,22 +92,6 @@ def constructors() -> rx.Component:
     Returns:
         A page with the latest team standings snapshot.
     """
-    # Combine the podium and remaining rows into one content column.
-    standings_content: rx.Component = rx.vstack(
-        podium_section(ConstructorsState.podium_standings, is_driver=False),
-        rx.cond(
-            ConstructorsState.has_remaining_standings,
-            leaderboard_section(
-                ConstructorsState.remaining_standings, is_driver=False
-            ),
-            rx.fragment(),
-        ),
-        align="stretch",
-        spacing="7",
-        width="100%",
-        padding_bottom="8",
-    )
-
     return rx.vstack(
         navbar(active_section="teams"),
         container(
@@ -122,19 +101,14 @@ def constructors() -> rx.Component:
                     "Teams’ Championship",
                     "Latest team championship standings.",
                 ),
-                # Show loading and errors before deciding whether standings are available.
-                rx.cond(
+                championship_section(
+                    ConstructorsState.podium_standings,
+                    ConstructorsState.remaining_standings,
+                    ConstructorsState.has_remaining_standings,
+                    ConstructorsState.has_standings,
                     ConstructorsState.loading,
-                    loading_panel(),
-                    rx.cond(
-                        ConstructorsState.error != "",
-                        message_panel(ConstructorsState.error),
-                        rx.cond(
-                            ConstructorsState.has_standings,
-                            standings_content,
-                            message_panel("No standings are available yet."),
-                        ),
-                    ),
+                    ConstructorsState.error,
+                    is_driver=False,
                 ),
                 align="stretch",
                 spacing="6",

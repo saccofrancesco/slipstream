@@ -5,9 +5,9 @@ from collections.abc import AsyncGenerator
 
 import reflex as rx
 
-from slipstream.components import container, navbar
+from slipstream.components import container, navbar, status_card
 from slipstream.components.classification import session_classification_section
-from slipstream.components.weekend import event_header, weekend_status_card
+from slipstream.components.weekend import event_header
 from slipstream.services import (
     DriverClassification,
     EventDetails,
@@ -179,11 +179,11 @@ def event_results() -> rx.Component:
                     ),
                     rx.cond(
                         EventState.loading,
-                        weekend_status_card(
+                        status_card(
                             "Loading archive event",
                             "Looking up the event schedule and session results…",
                         ),
-                        weekend_status_card(
+                        status_card(
                             "Event unavailable", EventState.error
                         ),
                     ),
