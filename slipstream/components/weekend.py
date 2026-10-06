@@ -211,93 +211,92 @@ def race_weekend_card(
     )
 
 
-def event_summary_card(event: rx.Var[dict[str, str]]) -> rx.Component:
-    """Render the selected archive event's identity and venue details.
+def event_header(event: rx.Var[dict[str, str]]) -> rx.Component:
+    """Use the selected Grand Prix details as the event page header.
 
     Args:
         event: Normalized event fields for the dynamic session-results page.
 
     Returns:
-        A responsive event card matching the featured weekend card style.
+        A responsive page header above the session selector.
     """
-    return rx.card(
-        rx.vstack(
-            rx.hstack(
-                rx.cond(
-                    event["country_flag"] != "",
-                    rx.box(
-                        flag_icon(event["country_flag"], event["country"]),
-                        font_size="2rem",
-                        line_height="1",
-                        flex_shrink="0",
-                    ),
-                    rx.fragment(),
-                ),
-                rx.vstack(
-                    rx.text(
-                        "ARCHIVE EVENT",
-                        size="2",
-                        weight="bold",
-                        color=rx.color("accent", 11),
-                        letter_spacing="0.14em",
-                    ),
-                    rx.heading(
-                        event["race_name"],
-                        as_="h2",
-                        size="7",
-                        weight="bold",
-                        letter_spacing="-0.03em",
-                    ),
-                    align="start",
-                    spacing="1",
-                    min_width="0",
-                ),
-                rx.badge(
-                    f"ROUND {event['round']}",
-                    color_scheme="red",
-                    variant="soft",
-                    size="2",
-                    white_space="nowrap",
-                ),
-                justify="between",
-                align="center",
-                width="100%",
-                flex_wrap="wrap",
-                gap="3",
+    return rx.vstack(
+        rx.hstack(
+            rx.text(
+                f"{event['season']} FORMULA 1 GRAND PRIX",
+                size="2",
+                weight="bold",
+                color=rx.color("accent", 11),
+                letter_spacing="0.14em",
             ),
-            rx.separator(),
-            rx.hstack(
-                rx.icon("map-pin", size=20, color=rx.color("accent", 11)),
-                rx.vstack(
-                    rx.text(event["circuit_name"], weight="bold"),
-                    rx.text(
-                        f"{event['locality']}, {event['country']}",
-                        color=rx.color("gray", 11),
-                    ),
-                    align="start",
-                    spacing="1",
-                    min_width="0",
-                ),
-                align="center",
-                spacing="3",
-                width="100%",
+            rx.badge(
+                f"ROUND {event['round']}",
+                color_scheme="red",
+                variant="soft",
+                size="2",
+                white_space="nowrap",
             ),
-            rx.hstack(
-                rx.icon("calendar-days", size=20, color=rx.color("accent", 11)),
-                rx.text(event["date_range"], weight="medium"),
-                align="center",
-                spacing="3",
-                width="100%",
-            ),
-            align="stretch",
-            spacing="4",
+            align="center",
+            flex_wrap="wrap",
+            gap="2",
             width="100%",
         ),
+        rx.hstack(
+            rx.cond(
+                event["country_flag"] != "",
+                rx.box(
+                    flag_icon(event["country_flag"], event["country"]),
+                    font_size="2.25rem",
+                    line_height="1",
+                    flex_shrink="0",
+                ),
+                rx.fragment(),
+            ),
+            rx.heading(
+                event["race_name"],
+                as_="h1",
+                size="9",
+                weight="bold",
+                font_size="clamp(2rem, 6vw, 3.5rem)",
+                letter_spacing="-0.04em",
+                line_height="1.05",
+                min_width="0",
+            ),
+            align="center",
+            spacing="3",
+            width="100%",
+        ),
+        rx.vstack(
+            rx.hstack(
+                rx.icon("map-pin", size=17, color=rx.color("accent", 11)),
+                rx.text(
+                    f"{event['circuit_name']} · {event['locality']}, {event['country']}",
+                    size="3",
+                    color=rx.color("gray", 11),
+                ),
+                align="start",
+                spacing="2",
+                width="100%",
+            ),
+            rx.hstack(
+                rx.icon("calendar-days", size=17, color=rx.color("accent", 11)),
+                rx.text(
+                    event["date_range"],
+                    size="3",
+                    color=rx.color("gray", 11),
+                ),
+                align="center",
+                spacing="2",
+            ),
+            align="start",
+            spacing="2",
+            width="100%",
+        ),
+        align="start",
+        spacing="3",
         width="100%",
-        background_color=rx.color("gray", 2),
-        border_width="1px",
-        border_style="solid",
-        border_color=rx.color("gray", 5),
+        padding_top="2",
+        padding_bottom="3",
     )
 
 
