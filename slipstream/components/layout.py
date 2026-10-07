@@ -90,3 +90,19 @@ def status_card(title: str, message: rx.Var[str] | str) -> rx.Component:
         border_style="solid",
         border_color=rx.color("gray", 5),
     )
+
+
+def loading_card(message: str) -> rx.Component:
+    """Show a centered spinner and loading message in the shared card style."""
+    return rx.card(
+        rx.vstack(
+            rx.spinner(size="3"),
+            rx.text(message, color=rx.color("gray", 11)),
+            align="center",
+            spacing="3",
+            padding_y="8",
+            width="100%",
+        ),
+        width="100%",
+        background_color=rx.color("gray", 2),
+    )
