@@ -5,7 +5,13 @@ from collections.abc import AsyncGenerator
 from datetime import date
 
 import reflex as rx
-from slipstream.components import container, navbar, page_header, status_card
+from slipstream.components import (
+    container,
+    loading_card,
+    navbar,
+    page_header,
+    status_card,
+)
 from slipstream.components.weekend import (
     race_weekend_card,
     season_archive_section,
@@ -151,9 +157,7 @@ def results() -> rx.Component:
                 # an empty result has its own explanatory status card.
                 rx.cond(
                     ResultsState.loading,
-                    status_card(
-                        "Loading the race weekend", "Checking the Formula 1 calendar…"
-                    ),
+                    loading_card("Checking the Formula 1 calendar…"),
                     rx.cond(
                         ResultsState.error != "",
                         status_card(
