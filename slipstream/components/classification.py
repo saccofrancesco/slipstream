@@ -5,7 +5,7 @@ import reflex as rx
 from slipstream.services import DriverClassification, SessionOption
 
 from .flag import flag_icon
-from .layout import status_card
+from .layout import loading_card, status_card
 from .standing import podium_styles
 
 
@@ -170,9 +170,7 @@ def session_classification_section(
         ),
         rx.cond(
             loading,
-            status_card(
-                "Loading session results", "Loading the selected classification…"
-            ),
+            loading_card("Loading the selected classification…"),
             rx.cond(
                 error != "",
                 status_card("Session results unavailable", error),
