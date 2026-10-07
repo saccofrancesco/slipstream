@@ -4,6 +4,7 @@ import reflex as rx
 from slipstream.services import PastEvent, ScheduleDay, ScheduledSession
 
 from .flag import flag_icon
+from .layout import loading_card
 
 
 def _schedule_session_row(session: rx.Var[ScheduledSession]) -> rx.Component:
@@ -434,7 +435,7 @@ def season_archive_section(
         rx.heading(f"{season} Season archive", as_="h2", size="5"),
         rx.cond(
             loading,
-            _archive_message("Loading past events…"),
+            loading_card("Loading past events…"),
             rx.cond(
                 error != "",
                 _archive_message(error),
