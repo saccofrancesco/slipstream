@@ -2,7 +2,7 @@
 
 import reflex as rx
 
-from .layout import status_card
+from .layout import loading_card, status_card
 from .standing import standing
 
 
@@ -123,27 +123,6 @@ def leaderboard_section(
     )
 
 
-def loading_panel() -> rx.Component:
-    """Build a card that explains standings are currently loading.
-
-    Returns:
-        A centered loading indicator and status message.
-    """
-    # Center the spinner and its message inside a neutral panel.
-    return rx.card(
-        rx.vstack(
-            rx.spinner(size="3"),
-            rx.text("Loading championship standings…", color=rx.color("gray", 11)),
-            align="center",
-            spacing="3",
-            padding_y="8",
-            width="100%",
-        ),
-        width="100%",
-        background_color=rx.color("gray", 2),
-    )
-
-
 def championship_section(
     podium: rx.Var[list[dict[str, str]]],
     remaining: rx.Var[list[dict[str, str]]],
@@ -168,7 +147,7 @@ def championship_section(
     )
     return rx.cond(
         loading,
-        loading_panel(),
+        loading_card("Loading championship standings…"),
         rx.cond(
             error != "",
             status_card("Standings unavailable", error),
