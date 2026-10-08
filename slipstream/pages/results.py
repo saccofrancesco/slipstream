@@ -20,8 +20,10 @@ from slipstream.services import (
     PastEvent,
     RaceWeekend,
     ScheduleDay,
+    ScheduledSession,
     get_past_events,
     get_race_weekend,
+    has_session_results,
 )
 
 
@@ -108,6 +110,7 @@ class ResultsState(rx.State):
                 # Keep the card's scalar values separate from its list of
                 # schedule rows, which has a different state type.
                 self.race_weekend = {
+                    "season": weekend["season"],
                     "status": weekend["status"],
                     "round": weekend["round"],
                     "race_name": weekend["race_name"],
@@ -135,6 +138,48 @@ class ResultsState(rx.State):
             self.archive_error = "Could not load past events. Please try again."
         finally:
             self.archive_loading = False
+        yield
+
+        if self.race_weekend.get("status") == "current":
+            # Only a published driver result table makes a session linkable.
+            # Treat feed failures independently so other sessions can appear.
+            sessions: list[ScheduledSession] = [
+                session
+                for day in self.schedule_days
+                for session in day["sessions"]
+            ]
+            checks = await asyncio.gather(
+                *(
+                    asyncio.to_thread(
+                        has_session_results,
+                        self.race_weekend["season"],
+                        self.race_weekend["round"],
+                        session["code"],
+                    )
+                    for session in sessions
+                ),
+                return_exceptions=True,
+            )
+            available_codes: set[str] = {
+                session["code"]
+                for session, available in zip(sessions, checks)
+                if available is True
+            }
+            self.schedule_days = [
+                {
+                    "day": day["day"],
+                    "date": day["date"],
+                    "sessions": [
+                        {
+                            **session,
+                            "results_available": session["code"] in available_codes,
+                        }
+                        for session in day["sessions"]
+                    ],
+                }
+                for day in self.schedule_days
+            ]
+            yield
 
 
 @rx.page("/results", "Results", on_load=ResultsState.load_race_weekend)
