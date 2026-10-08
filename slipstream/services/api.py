@@ -3,7 +3,7 @@
 import re
 from datetime import date, datetime, time, timezone
 from functools import lru_cache
-from math import isfinite
+from math import ceil, isfinite
 from statistics import median
 from typing import Any, TypedDict
 
@@ -586,14 +586,33 @@ def get_session_classification(
     return classification
 
 
+def _quick_lap_threshold(lap_times: list[float]) -> float | None:
+    """Return a 107% pace limit based on the quickest clean laps.
+
+    The median of the quickest tenth avoids letting one unusually fast lap
+    determine the limit. In a wholly wet session, its wet pace remains the
+    baseline; in mixed conditions, a few very slow laps cannot raise it.
+
+    Args:
+        lap_times: Clean timed laps for one driver, in seconds.
+
+    Returns:
+        The slow-lap cutoff, or ``None`` when no clean laps are available.
+    """
+    if not lap_times:
+        return None
+    quick_count = max(3, ceil(len(lap_times) * 0.1))
+    return median(sorted(lap_times)[:quick_count]) * 1.07
+
+
 def get_session_laps(
     season: int | str, round_number: int | str, session_code: str
 ) -> SessionLaps:
     """Load timed laps and team metadata for an archive session.
 
     Outliers include laps flagged inaccurate or deleted by FastF1, pit laps,
-    and laps more than 10 percent slower than that driver's median timed lap.
-    They remain available when the chart's outlier switch is enabled.
+    and laps slower than 107% of each driver's quickest clean-lap pace. They
+    remain available when the chart's outlier switch is enabled.
 
     Args:
         season: Championship season containing the event.
@@ -695,15 +714,13 @@ def get_session_laps(
             }
         )
 
-    # A per-driver median catches unusually slow timed laps even when the feed
-    # has not explicitly marked them inaccurate.
+    # Use clean quick laps as the pace reference so prolonged rain or other
+    # slow periods cannot stretch the chart's default time range.
     for driver in drivers:
         driver_laps = [lap for lap in laps if lap["driver"] == driver["code"]]
         baseline = [lap["seconds"] for lap in driver_laps if not lap["outlier"]]
-        if not baseline:
-            baseline = [lap["seconds"] for lap in driver_laps]
-        if baseline:
-            threshold = median(baseline) * 1.10
+        threshold = _quick_lap_threshold(baseline)
+        if threshold is not None:
             for lap in driver_laps:
                 lap["outlier"] = lap["outlier"] or lap["seconds"] > threshold
 
