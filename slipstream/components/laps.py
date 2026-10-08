@@ -128,11 +128,11 @@ def _lap_tooltip_formatter() -> rx.Var:
                 );
                 const compound = markerKey ? markerKey.slice(markerPrefix.length) : "";
                 const tyreIcons = {
-                    SOFT: "/tyres/soft.png",
-                    MEDIUM: "/tyres/medium.png",
-                    HARD: "/tyres/hard.png",
-                    INTERMEDIATE: "/tyres/intermediate.png",
-                    WET: "/tyres/wet.png",
+                    SOFT: "/tyres/soft.svg",
+                    MEDIUM: "/tyres/medium.svg",
+                    HARD: "/tyres/hard.svg",
+                    INTERMEDIATE: "/tyres/intermediate.svg",
+                    WET: "/tyres/wet.svg",
                 };
                 const tyreIcon = tyreIcons[compound];
                 const ms = Math.round(Number(value) * 1000);
