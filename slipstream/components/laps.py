@@ -6,6 +6,8 @@ import reflex as rx
 
 from .layout import loading_card, status_card
 
+CHART_ANIMATION_DURATION_MS: int = 1500
+
 
 class DriverChip(TypedDict):
     """Driver selection state and its current chart color."""
@@ -47,7 +49,7 @@ def _driver_line(series: rx.Var[DriverLine]) -> rx.Component:
         active_dot=False,
         connect_nulls=True,
         is_animation_active=True,
-        animation_duration=1800,
+        animation_duration=CHART_ANIMATION_DURATION_MS,
         animation_easing="ease-in-out",
     )
 
@@ -70,7 +72,7 @@ def _tyre_point_line(series: rx.Var[TyrePointLine]) -> rx.Component:
         connect_nulls=False,
         legend_type="none",
         is_animation_active=True,
-        animation_duration=1800,
+        animation_duration=CHART_ANIMATION_DURATION_MS,
         animation_easing="ease-in-out",
         custom_attrs={"tooltipType": "none"},
     )
