@@ -30,8 +30,10 @@ ergast: Ergast = Ergast()
 class ScheduledSession(TypedDict):
     """One session and its published UTC start time."""
 
+    code: str
     name: str
     time: str
+    results_available: bool
 
 
 class ScheduleDay(TypedDict):
@@ -139,7 +141,7 @@ EVENT_SESSION_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("SecondPractice", "FP2", "Practice 2"),
     ("ThirdPractice", "FP3", "Practice 3"),
     ("SprintQualifying", "SQ", "Sprint Qualifying"),
-    ("SprintShootout", "SS", "Sprint Shootout"),
+    ("SprintShootout", "SS", "Sprint Qualifying"),
     ("Sprint", "S", "Sprint"),
     ("Qualifying", "Q", "Qualifying"),
 )
@@ -586,6 +588,30 @@ def get_session_classification(
     return classification
 
 
+def has_session_results(
+    season: int | str, round_number: int | str, session_code: str
+) -> bool:
+    """Report whether FastF1 has published driver result rows for a session.
+
+    Args:
+        season: Championship season containing the event.
+        round_number: Event round in that season.
+        session_code: FastF1 session identifier from the weekend schedule.
+
+    Returns:
+        Whether at least one driver result row is available.
+    """
+    parsed_season: int | None = parse_integer(season)
+    parsed_round: int | None = parse_integer(round_number)
+    allowed_codes: set[str] = {code for _, code, _ in EVENT_SESSION_FIELDS} | {"R"}
+    if parsed_season is None or parsed_round is None or session_code not in allowed_codes:
+        return False
+
+    session: Session = fastf1.get_session(parsed_season, parsed_round, session_code)
+    session.load(laps=False, telemetry=False, weather=False, messages=False)
+    return not session.results.empty
+
+
 def _quick_lap_threshold(lap_times: list[float]) -> float | None:
     """Return a 107% pace limit based on the quickest clean laps.
 
@@ -979,10 +1005,7 @@ def get_race_weekend(
     current_date: date = today or date.today()
     # Sprint qualifying appears under two Ergast field names. Both map to one
     # display label and are deduplicated when sessions are grouped by date.
-    session_fields: tuple[tuple[str, str], ...] = tuple(
-        (field, "Sprint Qualifying" if field == "SprintShootout" else label)
-        for field, _, label in EVENT_SESSION_FIELDS
-    )
+    session_fields: tuple[tuple[str, str, str], ...] = EVENT_SESSION_FIELDS
     selected: tuple[date, date, dict[str, Any]] | None = None
     selected_season: int = current_date.year
     status = ""
@@ -1003,7 +1026,7 @@ def get_race_weekend(
                 continue
 
             session_dates: list[date] = []
-            for field, _ in session_fields:
+            for field, _, _ in session_fields:
                 session: object = race.get(field)
                 session_date_value: object = (
                     session.get("date") if isinstance(session, dict) else session
@@ -1041,7 +1064,8 @@ def get_race_weekend(
     # Build the display schedule only for the selected weekend. Keep each
     # session's start time with its name so the card can align them.
     sessions_by_date: dict[date, dict[str, ScheduledSession]] = {}
-    for field, session_name in session_fields:
+    sprint_qualifying_added = False
+    for field, session_code, session_name in session_fields:
         session: object = race.get(field)
         session_date_value: object = (
             session.get("date") if isinstance(session, dict) else session
@@ -1050,25 +1074,30 @@ def get_race_weekend(
         if session_date is None or not start_date <= session_date <= race_date:
             continue
 
+        # The event selector uses the first published Sprint Qualifying field.
+        # Keep the schedule's link code in step with that selector.
+        if field in ("SprintQualifying", "SprintShootout"):
+            if sprint_qualifying_added:
+                continue
+            sprint_qualifying_added = True
+
         day_sessions = sessions_by_date.setdefault(session_date, {})
         session_time = format_session_time(
             session.get("time") if isinstance(session, dict) else None
         )
-        # Sprint qualifying may be present under both API field names.
-        # Prefer the entry with a known time if only one provides it.
-        if session_name not in day_sessions or (
-            day_sessions[session_name]["time"] == "TBD"
-            and session_time != "TBD"
-        ):
-            day_sessions[session_name] = {
-                "name": session_name,
-                "time": session_time,
-            }
+        day_sessions[session_name] = {
+            "code": session_code,
+            "name": session_name,
+            "time": session_time,
+            "results_available": False,
+        }
 
     # The race's date and time are stored at the top level of the record.
     sessions_by_date.setdefault(race_date, {})["Race"] = {
+        "code": "R",
         "name": "Race",
         "time": format_session_time(race.get("time")),
+        "results_available": False,
     }
     schedule_days: list[ScheduleDay] = [
         {
