@@ -7,18 +7,28 @@ import reflex as rx
 
 from slipstream.components import container, loading_card, navbar, status_card
 from slipstream.components.classification import session_classification_section
+from slipstream.components.laps import (
+    DriverChip,
+    DriverLine,
+    TyrePointLine,
+    laps_section,
+)
 from slipstream.components.weekend import event_header
 from slipstream.services import (
     DriverClassification,
     EventDetails,
+    LapDriver,
+    LapPoint,
+    SessionLaps,
     SessionOption,
     get_event_details,
     get_session_classification,
+    get_session_laps,
 )
 
 
 class EventState(rx.State):
-    """Hold event details and the classification for one selected session."""
+    """Hold event details, classification, and lap data for one session."""
 
     event_season: str = ""
     round_number: str = ""
@@ -28,6 +38,14 @@ class EventState(rx.State):
     classification: list[DriverClassification] = []
     loading: bool = True
     error: str = ""
+    active_tab: str = "session"
+    lap_drivers: list[LapDriver] = []
+    lap_points: list[LapPoint] = []
+    selected_drivers: list[str] = []
+    show_outliers: bool = False
+    laps_loading: bool = False
+    laps_loaded: bool = False
+    laps_error: str = ""
 
     @rx.var
     def has_event(self) -> bool:
@@ -47,6 +65,134 @@ class EventState(rx.State):
                 return session["name"]
         return "Race"
 
+    @rx.var
+    def driver_chips(self) -> list[DriverChip]:
+        """Mark selections and use white for a selected teammate's line."""
+        first_by_team: dict[str, str] = {}
+        for code in self.selected_drivers:
+            driver = next((item for item in self.lap_drivers if item["code"] == code), None)
+            if driver is not None:
+                first_by_team.setdefault(driver["team"] or code, code)
+        team_order: list[str] = []
+        drivers_by_team: dict[str, list[LapDriver]] = {}
+        for driver in self.lap_drivers:
+            team = driver["team"] or driver["code"]
+            if team not in drivers_by_team:
+                team_order.append(team)
+                drivers_by_team[team] = []
+            drivers_by_team[team].append(driver)
+
+        chips: list[DriverChip] = []
+        for team in team_order:
+            for driver in drivers_by_team[team]:
+                team_color = driver["team_color"]
+                chips.append(
+                    {
+                        **driver,
+                        "selected": driver["code"] in self.selected_drivers,
+                        "plot_color": (
+                            team_color
+                            if first_by_team.get(team) == driver["code"]
+                            else "#FFFFFF"
+                        ),
+                        "selected_fill": (
+                            f"color-mix(in srgb, {team_color} 22%, transparent)"
+                        ),
+                    }
+                )
+        return chips
+
+    @rx.var
+    def visible_lap_points(self) -> list[LapPoint]:
+        """Apply the outlier switch before building chart lines and markers."""
+        return [
+            lap
+            for lap in self.lap_points
+            if self.show_outliers or not lap["outlier"]
+        ]
+
+    @rx.var
+    def driver_lines(self) -> list[DriverLine]:
+        """Describe selected drivers that have visible laps for this chart."""
+        visible_codes = {lap["driver"] for lap in self.visible_lap_points}
+        return [
+            {"code": chip["code"], "color": chip["plot_color"]}
+            for chip in self.driver_chips
+            if chip["selected"] and chip["code"] in visible_codes
+        ]
+
+    @rx.var
+    def tyre_point_lines(self) -> list[TyrePointLine]:
+        """Create one colored marker series per driver's used compound."""
+        series: list[TyrePointLine] = []
+        for driver in self.driver_lines:
+            compounds: dict[str, str] = {
+                lap["compound"]: lap["compound_color"]
+                for lap in self.visible_lap_points
+                if lap["driver"] == driver["code"]
+            }
+            for compound, compound_color in sorted(compounds.items()):
+                series.append(
+                    {
+                        "key": f"marker_{driver['code']}_{compound}",
+                        "code": driver["code"],
+                        "color": compound_color,
+                        "line_color": driver["color"],
+                    }
+                )
+        return series
+
+    @rx.var
+    def lap_chart_data(self) -> list[dict[str, float | int | None]]:
+        """Align selected drivers and tyre markers by the shared lap number."""
+        if not self.driver_lines:
+            return []
+        markers_by_driver: dict[str, list[TyrePointLine]] = {}
+        for marker in self.tyre_point_lines:
+            markers_by_driver.setdefault(marker["code"], []).append(marker)
+
+        chart_rows: dict[int, dict[str, float | int | None]] = {}
+        for lap in self.visible_lap_points:
+            if lap["driver"] not in markers_by_driver:
+                continue
+            row = chart_rows.setdefault(lap["number"], {"lap_number": lap["number"]})
+            for driver in self.driver_lines:
+                row.setdefault(driver["code"], None)
+                for marker in markers_by_driver[driver["code"]]:
+                    row.setdefault(marker["key"], None)
+            row[lap["driver"]] = lap["seconds"]
+            row[f"marker_{lap['driver']}_{lap['compound']}"] = lap["seconds"]
+
+        return [chart_rows[number] for number in sorted(chart_rows)]
+
+    @rx.var
+    def selected_driver_count(self) -> int:
+        """Return how many drivers are currently plotted."""
+        return len(self.selected_drivers)
+
+    @rx.event
+    async def change_tab(self, tab: str) -> AsyncGenerator[None, None]:
+        """Load the selected session's laps the first time its tab opens."""
+        self.active_tab = tab
+        if tab == "laps" and self.event and not self.laps_loaded and not self.laps_loading:
+            async for update in self._load_laps(self.selected_session):
+                yield update
+
+    @rx.event
+    def toggle_driver(self, code: str) -> None:
+        """Add or remove a selectable driver from the lap chart."""
+        if not any(driver["code"] == code for driver in self.lap_drivers):
+            return
+        if code in self.selected_drivers:
+            self.selected_drivers = [item for item in self.selected_drivers if item != code]
+        else:
+            self.selected_drivers = [*self.selected_drivers, code]
+
+    @rx.event
+    def set_show_outliers(self, value: bool) -> None:
+        """Include or hide flagged laps in the chart."""
+        self.show_outliers = value
+
     @rx.event
     async def load_event(self) -> AsyncGenerator[None, None]:
         """Load route event metadata, then its default Race classification."""
@@ -59,6 +205,14 @@ class EventState(rx.State):
         self.classification = []
         self.error = ""
         self.loading = True
+        self.active_tab = "session"
+        self.lap_drivers = []
+        self.lap_points = []
+        self.selected_drivers = []
+        self.show_outliers = False
+        self.laps_loading = False
+        self.laps_loaded = False
+        self.laps_error = ""
         yield
 
         try:
@@ -113,10 +267,45 @@ class EventState(rx.State):
         self.classification = []
         self.error = ""
         self.loading = True
+        self.lap_drivers = []
+        self.lap_points = []
+        self.selected_drivers = []
+        self.laps_loading = self.active_tab == "laps"
+        self.laps_loaded = False
+        self.laps_error = ""
         yield
 
         await self._load_classification(session_code)
         self.loading = False
+        if self.active_tab == "laps":
+            async for update in self._load_laps(session_code):
+                yield update
+
+    async def _load_laps(self, session_code: str) -> AsyncGenerator[None, None]:
+        """Fetch the selected session's timed laps without blocking the UI."""
+        self.laps_loading = True
+        self.laps_error = ""
+        yield
+        try:
+            data: SessionLaps = await asyncio.to_thread(
+                get_session_laps,
+                self.event_season,
+                self.round_number,
+                session_code,
+            )
+        except Exception:
+            if self.selected_session != session_code:
+                return
+            self.lap_drivers = []
+            self.lap_points = []
+            self.laps_error = "Could not load this session's lap times. Please try again."
+        else:
+            if self.selected_session != session_code:
+                return
+            self.lap_drivers = data["drivers"]
+            self.lap_points = data["laps"]
+            self.laps_loaded = bool(data["laps"])
+        self.laps_loading = False
 
     async def _load_classification(self, session_code: str) -> None:
         """Fetch one session's driver rows without blocking the event loop."""
@@ -200,12 +389,30 @@ def event_results() -> rx.Component:
                                     value="session",
                                     width="100%",
                                 ),
-                                rx.tabs.content(value="laps"),
+                                rx.tabs.content(
+                                    laps_section(
+                                        EventState.selected_session_label,
+                                        EventState.driver_chips,
+                                        EventState.toggle_driver,
+                                        EventState.lap_chart_data,
+                                        EventState.driver_lines,
+                                        EventState.tyre_point_lines,
+                                        EventState.selected_driver_count,
+                                        EventState.show_outliers,
+                                        EventState.set_show_outliers,
+                                        EventState.laps_loading,
+                                        EventState.laps_loaded,
+                                        EventState.laps_error,
+                                    ),
+                                    value="laps",
+                                    width="100%",
+                                ),
                                 rx.tabs.content(value="telemetry"),
                                 width="100%",
                                 padding_top="1rem",
                             ),
                             default_value="session",
+                            on_change=EventState.change_tab,
                             width="100%",
                         ),
                         align="stretch",
