@@ -4,7 +4,6 @@ import reflex as rx
 
 from slipstream.services import DriverClassification, SessionOption
 
-from .flag import flag_icon
 from .layout import loading_card, status_card
 from .standing import podium_styles
 
@@ -47,25 +46,18 @@ def _classification_row(entry: rx.Var[DriverClassification]) -> rx.Component:
                     spacing="1",
                 ),
                 rx.vstack(
-                    rx.hstack(
-                        flag_icon(entry["country_flag"], entry["nationality"]),
-                        rx.text(
-                            entry["given_name"],
-                            " ",
-                            entry["family_name"],
-                            size="3",
-                            weight="bold",
-                            line_height="1.25",
-                            overflow="hidden",
-                            text_overflow="ellipsis",
-                            white_space="nowrap",
-                            min_width="0",
-                        ),
-                        align="center",
-                        spacing="2",
+                    rx.text(
+                        entry["given_name"],
+                        " ",
+                        entry["family_name"],
+                        size="3",
+                        weight="bold",
+                        line_height="1.25",
+                        overflow="hidden",
+                        text_overflow="ellipsis",
+                        white_space="nowrap",
                         width="100%",
                         min_width="0",
-                        overflow="hidden",
                     ),
                     rx.text(
                         entry["team"],

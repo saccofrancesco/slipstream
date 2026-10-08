@@ -3,8 +3,6 @@
 # Reflex provides the reactive values and UI components used by this module.
 import reflex as rx
 
-from .flag import flag_icon
-
 
 def standing(
     entry: rx.Var[dict[str, str]],
@@ -29,27 +27,20 @@ def standing(
     # Build the identity details appropriate to the entry type.
     identity: rx.Component
     if is_driver:
-        # Keep the nationality flag with the driver, above the team name.
+        # Keep the driver name above the team name.
         identity = rx.vstack(
-            rx.hstack(
-                flag_icon(entry["country_flag"], entry["nationality"]),
-                rx.text(
-                    entry["given_name"],
-                    " ",
-                    entry["family_name"],
-                    size="4" if featured else "3",
-                    weight="bold",
-                    line_height="1.25",
-                    overflow="hidden",
-                    text_overflow="ellipsis",
-                    white_space="nowrap",
-                    min_width="0",
-                ),
-                align="center",
-                spacing="2",
+            rx.text(
+                entry["given_name"],
+                " ",
+                entry["family_name"],
+                size="4" if featured else "3",
+                weight="bold",
+                line_height="1.25",
+                overflow="hidden",
+                text_overflow="ellipsis",
+                white_space="nowrap",
                 width="100%",
                 min_width="0",
-                overflow="hidden",
             ),
             rx.text(
                 entry["team"],
