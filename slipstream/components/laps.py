@@ -93,7 +93,7 @@ def _driver_chip(chip: rx.Var[DriverChip], on_toggle: rx.EventHandler) -> rx.Com
         color=chip["team_color"],
         border_style="solid",
         border_color=chip["team_color"],
-        border_width=rx.cond(chip["selected"], "2px", "1px"),
+        border_width="1px",
         background_color=rx.cond(chip["selected"], chip["selected_fill"], "transparent"),
         _hover={"background_color": chip["selected_fill"]},
         aria_pressed=chip["selected"],
