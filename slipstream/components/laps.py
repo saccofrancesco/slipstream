@@ -84,8 +84,10 @@ def _driver_chip(chip: rx.Var[DriverChip], on_toggle: rx.EventHandler) -> rx.Com
         on_click=lambda: on_toggle(chip["code"]),
         variant="ghost",
         size="2",
-        width="100%",
+        width="3.75rem",
         box_sizing="border-box",
+        padding_x="0.5rem",
+        margin="0",
         font_weight="bold",
         letter_spacing="0.04em",
         color=chip["team_color"],
@@ -100,12 +102,12 @@ def _driver_chip(chip: rx.Var[DriverChip], on_toggle: rx.EventHandler) -> rx.Com
 
 
 def _lap_time_formatter() -> rx.Var:
-    """Return the JavaScript formatter used on the numeric time axis."""
+    """Return whole-second labels for the numeric lap-time axis."""
     return rx.Var(
         _js_expr=(
-            '(value) => { const ms = Math.round(Number(value) * 1000); '
-            'const minutes = Math.floor(ms / 60000); '
-            'const seconds = ((ms % 60000) / 1000).toFixed(3).padStart(6, "0"); '
+            '(value) => { const totalSeconds = Math.floor(Number(value)); '
+            'const minutes = Math.floor(totalSeconds / 60); '
+            'const seconds = String(totalSeconds % 60).padStart(2, "0"); '
             'return `${minutes}:${seconds}`; }'
         )
     )
@@ -185,15 +187,14 @@ def laps_section(
                                     chips,
                                     lambda chip: _driver_chip(chip, on_toggle_driver),
                                 ),
-                                grid_template_columns="repeat(2, minmax(0, 1fr))",
-                                row_gap="0.25rem",
-                                column_gap="0.5rem",
-                                width="100%",
+                                grid_template_columns="repeat(2, 3.75rem)",
+                                gap="0.5rem",
+                                width="fit-content",
                             ),
                             align="stretch",
                             spacing="2",
-                            width=rx.breakpoints(initial="100%", md="13rem"),
-                            min_width=rx.breakpoints(initial="0", md="13rem"),
+                            width="fit-content",
+                            flex_shrink="0",
                         ),
                         rx.box(
                             rx.recharts.line_chart(
@@ -211,11 +212,11 @@ def laps_section(
                                     axis_line=False,
                                     tick_line=False,
                                     stroke=rx.color("gray", 10),
-                                    height=48,
+                                    height=56,
                                     label={
                                         "value": "LAP NUMBER",
                                         "position": "insideBottom",
-                                        "offset": -12,
+                                        "offset": 4,
                                         "fill": rx.color("gray", 10),
                                     },
                                 ),
@@ -226,7 +227,7 @@ def laps_section(
                                     tick_formatter=time_formatter,
                                     axis_line=False,
                                     tick_line=False,
-                                    width=82,
+                                    width=64,
                                     stroke=rx.color("gray", 10),
                                     label={
                                         "value": "LAP TIME",
@@ -278,7 +279,7 @@ def laps_section(
                                 data=chart_data,
                                 width="100%",
                                 height=440,
-                                margin={"top": 8, "right": 20, "left": 6, "bottom": 4},
+                                margin={"top": 8, "right": 20, "left": 6, "bottom": 20},
                             ),
                             rx.cond(
                                 selected_count == 0,
@@ -300,7 +301,7 @@ def laps_section(
                             flex="1",
                         ),
                         direction=rx.breakpoints(initial="column", md="row"),
-                        gap="5",
+                        gap="1.5rem",
                         width="100%",
                         align="start",
                     ),
