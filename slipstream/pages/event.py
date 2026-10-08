@@ -248,6 +248,9 @@ class EventState(rx.State):
             "date_range": details["date_range"],
         }
         self.sessions = details["sessions"]
+        requested_session: str = self.router.url.query_parameters.get("session", "R")
+        if any(session["code"] == requested_session for session in self.sessions):
+            self.selected_session = requested_session
         yield
 
         await self._load_classification(self.selected_session)
