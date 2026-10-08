@@ -7,7 +7,9 @@ from .flag import flag_icon
 from .layout import loading_card
 
 
-def _schedule_session_row(session: rx.Var[ScheduledSession]) -> rx.Component:
+def _schedule_session_row(
+    session: rx.Var[ScheduledSession], weekend: rx.Var[dict[str, str]]
+) -> rx.Component:
     """Keep a session's name and UTC start time on one aligned row."""
     return rx.hstack(
         rx.text(
@@ -16,14 +18,31 @@ def _schedule_session_row(session: rx.Var[ScheduledSession]) -> rx.Component:
             weight="medium",
             color=rx.color("gray", 12),
         ),
-        rx.text(
-            session["time"],
-            size="2",
-            weight="bold",
-            color=rx.color("accent", 11),
-            white_space="nowrap",
-            font_variant_numeric="tabular-nums",
-            text_align="right",
+        rx.vstack(
+            rx.text(
+                session["time"],
+                size="2",
+                weight="bold",
+                color=rx.color("accent", 11),
+                white_space="nowrap",
+                font_variant_numeric="tabular-nums",
+                text_align="right",
+            ),
+            rx.cond(
+                session["results_available"],
+                rx.link(
+                    "Results →",
+                    href=f"/results/{weekend['season']}/{weekend['round']}?session={session['code']}",
+                    size="2",
+                    weight="medium",
+                    color=rx.color("accent", 11),
+                    white_space="nowrap",
+                    aria_label=f"View {session['name']} results",
+                ),
+                rx.fragment(),
+            ),
+            align="end",
+            spacing="1",
             flex_shrink="0",
         ),
         justify="between",
@@ -33,7 +52,9 @@ def _schedule_session_row(session: rx.Var[ScheduledSession]) -> rx.Component:
     )
 
 
-def _schedule_day_column(day: rx.Var[ScheduleDay]) -> rx.Component:
+def _schedule_day_column(
+    day: rx.Var[ScheduleDay], weekend: rx.Var[dict[str, str]]
+) -> rx.Component:
     """Render one date and its sessions inside the weekend card.
 
     Args:
@@ -54,7 +75,10 @@ def _schedule_day_column(day: rx.Var[ScheduleDay]) -> rx.Component:
             rx.text(day["date"], size="2", color=rx.color("gray", 10)),
             rx.separator(),
             rx.vstack(
-                rx.foreach(day["sessions"], _schedule_session_row),
+                rx.foreach(
+                    day["sessions"],
+                    lambda session: _schedule_session_row(session, weekend),
+                ),
                 align="stretch",
                 spacing="2",
                 width="100%",
@@ -191,7 +215,10 @@ def race_weekend_card(
                     gap="2",
                 ),
                 rx.grid(
-                    rx.foreach(schedule_days, _schedule_day_column),
+                    rx.foreach(
+                        schedule_days,
+                        lambda day: _schedule_day_column(day, weekend),
+                    ),
                     columns=rx.breakpoints(initial="1", md=schedule_column_count),
                     spacing="3",
                     width="100%",
