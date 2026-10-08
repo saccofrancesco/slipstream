@@ -3,11 +3,14 @@
 from .api import (
     DriverClassification,
     EventDetails,
+    LapDriver,
+    LapPoint,
     PastEvent,
     RaceWeekend,
     ScheduleDay,
     ScheduledSession,
     SessionOption,
+    SessionLaps,
     get_available_seasons,
     get_completed_races,
     get_constructor_standings,
@@ -15,17 +18,21 @@ from .api import (
     get_past_events,
     get_race_weekend,
     get_session_classification,
+    get_session_laps,
     get_driver_standings,
 )
 
 __all__: list[str] = [
     "DriverClassification",
     "EventDetails",
+    "LapDriver",
+    "LapPoint",
     "PastEvent",
     "RaceWeekend",
     "ScheduleDay",
     "ScheduledSession",
     "SessionOption",
+    "SessionLaps",
     "get_available_seasons",
     "get_completed_races",
     "get_constructor_standings",
@@ -33,5 +40,6 @@ __all__: list[str] = [
     "get_past_events",
     "get_race_weekend",
     "get_session_classification",
+    "get_session_laps",
     "get_driver_standings",
 ]
