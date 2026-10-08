@@ -115,6 +115,82 @@ def _lap_time_formatter() -> rx.Var:
     )
 
 
+def _lap_tooltip_formatter() -> rx.Var:
+    """Render each driver's tooltip row with its line color and lap tyre."""
+    return rx.Var(
+        _js_expr="""
+            (value, name, item) => {
+                const code = String(name);
+                const row = item.payload ?? {};
+                const markerPrefix = `marker_${code}_`;
+                const markerKey = Object.keys(row).find(
+                    (key) => key.startsWith(markerPrefix) && row[key] != null
+                );
+                const compound = markerKey ? markerKey.slice(markerPrefix.length) : "";
+                const tyreIcons = {
+                    SOFT: "/tyres/soft.png",
+                    MEDIUM: "/tyres/medium.png",
+                    HARD: "/tyres/hard.png",
+                    INTERMEDIATE: "/tyres/intermediate.png",
+                    WET: "/tyres/wet.png",
+                };
+                const tyreIcon = tyreIcons[compound];
+                const ms = Math.round(Number(value) * 1000);
+                const minutes = Math.floor(ms / 60000);
+                const seconds = ((ms % 60000) / 1000).toFixed(3).padStart(6, "0");
+                const children = [
+                    jsx("span", {
+                        "aria-hidden": true,
+                        style: {
+                            width: "0.625rem",
+                            height: "0.625rem",
+                            borderRadius: "3px",
+                            backgroundColor: item.color || item.stroke,
+                            flexShrink: 0,
+                        },
+                    }),
+                    jsx("span", {style: {fontWeight: 700}, children: code}),
+                    jsx("span", {
+                        style: {marginLeft: "auto", fontVariantNumeric: "tabular-nums"},
+                        children: `${minutes}:${seconds}`,
+                    }),
+                ];
+                if (tyreIcon) {
+                    children.push(jsx("img", {
+                        src: tyreIcon,
+                        alt: `${compound.toLowerCase()} tyre`,
+                        width: 24,
+                        height: 24,
+                        style: {display: "block", objectFit: "contain", flexShrink: 0},
+                    }));
+                } else {
+                    children.push(jsx("span", {
+                        role: "img",
+                        "aria-label": "Tyre unknown",
+                        title: "Tyre unknown",
+                        style: {
+                            width: "1.5rem",
+                            height: "1.5rem",
+                            border: "1px solid var(--gray-9)",
+                            borderRadius: "50%",
+                            flexShrink: 0,
+                        },
+                    }));
+                }
+                return [jsx("span", {
+                    style: {
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "0.5rem",
+                        minWidth: "11rem",
+                    },
+                    children,
+                }), null];
+            }
+        """
+    )
+
+
 def laps_section(
     selected_session_label: rx.Var[str],
     chips: rx.Var[list[DriverChip]],
@@ -131,14 +207,7 @@ def laps_section(
 ) -> rx.Component:
     """Render the selected session's controls and interactive lap chart."""
     time_formatter = _lap_time_formatter()
-    tooltip_time_formatter = rx.Var(
-        _js_expr=(
-            '(value) => { const ms = Math.round(Number(value) * 1000); '
-            'const minutes = Math.floor(ms / 60000); '
-            'const seconds = ((ms % 60000) / 1000).toFixed(3).padStart(6, "0"); '
-            'return `${minutes}:${seconds}`; }'
-        )
-    )
+    tooltip_formatter = _lap_tooltip_formatter()
     tooltip_lap_formatter = rx.Var(_js_expr='(value) => `Lap ${value}`')
 
     return rx.vstack(
@@ -265,7 +334,7 @@ def laps_section(
                                     },
                                     is_animation_active=False,
                                     custom_attrs={
-                                        "formatter": tooltip_time_formatter,
+                                        "formatter": tooltip_formatter,
                                         "labelFormatter": tooltip_lap_formatter,
                                     },
                                 ),
