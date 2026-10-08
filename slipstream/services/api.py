@@ -4,6 +4,7 @@ import re
 from datetime import date, datetime, time, timezone
 from functools import lru_cache
 from math import isfinite
+from statistics import median
 from typing import Any, TypedDict
 
 # FastF1 provides the Ergast client used to retrieve calendars and standings.
@@ -102,6 +103,34 @@ class DriverClassification(TypedDict):
     team_color: str
     time: str
     time_label: str
+
+
+class LapDriver(TypedDict):
+    """A driver available for selection in a session's lap chart."""
+
+    code: str
+    name: str
+    team: str
+    team_color: str
+
+
+class LapPoint(TypedDict):
+    """One timed lap with the compound and outlier classification."""
+
+    driver: str
+    number: int
+    seconds: float
+    time: str
+    compound: str
+    compound_color: str
+    outlier: bool
+
+
+class SessionLaps(TypedDict):
+    """Display-ready drivers and laps from one FastF1 session."""
+
+    drivers: list[LapDriver]
+    laps: list[LapPoint]
 
 
 # Keep the calendar's public session names and FastF1 identifiers together.
@@ -555,6 +584,134 @@ def get_session_classification(
         )
 
     return classification
+
+
+def get_session_laps(
+    season: int | str, round_number: int | str, session_code: str
+) -> SessionLaps:
+    """Load timed laps and team metadata for an archive session.
+
+    Outliers include laps flagged inaccurate or deleted by FastF1, pit laps,
+    and laps more than 10 percent slower than that driver's median timed lap.
+    They remain available when the chart's outlier switch is enabled.
+
+    Args:
+        season: Championship season containing the event.
+        round_number: Event round in that season.
+        session_code: FastF1 session identifier.
+
+    Returns:
+        Selectable drivers and timed laps, including outlier flags.
+    """
+    parsed_season = parse_integer(season)
+    parsed_round = parse_integer(round_number)
+    if parsed_season is None or parsed_round is None:
+        raise ValueError("A numeric season and round are required.")
+    if session_code not in {"FP1", "FP2", "FP3", "SQ", "SS", "S", "Q", "R"}:
+        raise ValueError("The requested session is not supported.")
+
+    session: Session = fastf1.get_session(parsed_season, parsed_round, session_code)
+    session.load(laps=True, telemetry=False, weather=False, messages=False)
+    if session.laps.empty:
+        return {"drivers": [], "laps": []}
+    try:
+        compound_colors = fastf1.plotting.get_compound_mapping(session)
+    except Exception:
+        # Some older or incomplete timing feeds do not identify the event year.
+        compound_colors = {
+            "SOFT": "#E10600",
+            "MEDIUM": "#F2CE22",
+            "HARD": "#F2F2F2",
+            "INTERMEDIATE": "#38B449",
+            "WET": "#2D9CDB",
+        }
+
+    result_rows = session.results.to_dict(orient="records")
+    drivers: list[LapDriver] = []
+    known_codes: set[str] = set()
+    for row in result_rows:
+        code = _classification_driver_code(row)
+        if not code or code in known_codes:
+            continue
+        team = format_value(row.get("TeamName"))
+        team_id = format_value(row.get("TeamId"))
+        full_name = format_value(row.get("FullName")) or code
+        drivers.append(
+            {
+                "code": code,
+                "name": full_name,
+                "team": team,
+                "team_color": get_team_color(
+                    [{"constructorId": team_id, "name": team}],
+                    row.get("TeamColor"),
+                    season=parsed_season,
+                    round_number=parsed_round,
+                ),
+            }
+        )
+        known_codes.add(code)
+
+    raw_laps = session.laps.to_dict(orient="records")
+    laps: list[LapPoint] = []
+    for row in raw_laps:
+        code = format_value(row.get("Driver"))
+        seconds = _time_seconds(row.get("LapTime"))
+        number = _lap_count(row.get("LapNumber"))
+        if not code or seconds is None or seconds <= 0 or number is None:
+            continue
+        if code not in known_codes:
+            team = format_value(row.get("Team"))
+            drivers.append(
+                {
+                    "code": code,
+                    "name": code,
+                    "team": team,
+                    "team_color": get_team_color(
+                        [{"name": team}],
+                        season=parsed_season,
+                        round_number=parsed_round,
+                    ),
+                }
+            )
+            known_codes.add(code)
+        accuracy = row.get("IsAccurate")
+        inaccurate = not _is_missing(accuracy) and not bool(accuracy)
+        deleted = not _is_missing(row.get("Deleted")) and bool(row.get("Deleted"))
+        pit_lap = not _is_missing(row.get("PitInTime")) or not _is_missing(
+            row.get("PitOutTime")
+        )
+        compound = format_value(row.get("Compound")).upper()
+        if compound in {"", "NONE"}:
+            compound = "UNKNOWN"
+        laps.append(
+            {
+                "driver": code,
+                "number": number,
+                "seconds": seconds,
+                "time": _format_classification_time(row["LapTime"]),
+                "compound": compound,
+                "compound_color": compound_colors.get(compound, "#969BA5"),
+                "outlier": inaccurate or deleted or pit_lap,
+            }
+        )
+
+    # A per-driver median catches unusually slow timed laps even when the feed
+    # has not explicitly marked them inaccurate.
+    for driver in drivers:
+        driver_laps = [lap for lap in laps if lap["driver"] == driver["code"]]
+        baseline = [lap["seconds"] for lap in driver_laps if not lap["outlier"]]
+        if not baseline:
+            baseline = [lap["seconds"] for lap in driver_laps]
+        if baseline:
+            threshold = median(baseline) * 1.10
+            for lap in driver_laps:
+                lap["outlier"] = lap["outlier"] or lap["seconds"] > threshold
+
+    timed_codes = {lap["driver"] for lap in laps}
+    return {
+        "drivers": [driver for driver in drivers if driver["code"] in timed_codes],
+        "laps": laps,
+    }
 
 
 def _is_missing(value: object) -> bool:
