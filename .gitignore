@@ -5,3 +5,4 @@ assets/external/
 __pycache__/
 *.db
 .venv
+.DS_store
