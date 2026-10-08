@@ -123,7 +123,7 @@ class EventState(rx.State):
 
     @rx.var
     def tyre_point_lines(self) -> list[TyrePointLine]:
-        """Create one colored marker series per driver's used compound."""
+        """Create filled known-tyre markers and hollow unknown-tyre markers."""
         series: list[TyrePointLine] = []
         for driver in self.driver_lines:
             compounds: dict[str, str] = {
@@ -136,7 +136,14 @@ class EventState(rx.State):
                     {
                         "key": f"marker_{driver['code']}_{compound}",
                         "code": driver["code"],
-                        "color": compound_color,
+                        # Match the plot background so the line does not show
+                        # through an unknown-tyre marker's hollow center.
+                        "color": (
+                            compound_color
+                            if compound
+                            in {"SOFT", "MEDIUM", "HARD", "INTERMEDIATE", "WET"}
+                            else "var(--gray-1)"
+                        ),
                         "line_color": driver["color"],
                     }
                 )
