@@ -3,6 +3,7 @@
 from typing import TypedDict
 
 import reflex as rx
+from reflex.vars.function import FunctionStringVar
 
 from .layout import loading_card, status_card
 
@@ -103,9 +104,9 @@ def _driver_chip(chip: rx.Var[DriverChip], on_toggle: rx.EventHandler) -> rx.Com
     )
 
 
-def _lap_time_formatter() -> rx.Var:
+def _lap_time_formatter() -> FunctionStringVar:
     """Return whole-second labels for the numeric lap-time axis."""
-    return rx.Var(
+    return FunctionStringVar(
         _js_expr=(
             '(value) => { const totalSeconds = Math.floor(Number(value)); '
             'const minutes = Math.floor(totalSeconds / 60); '
