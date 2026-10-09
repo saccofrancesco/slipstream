@@ -3,8 +3,10 @@
 import asyncio
 from collections.abc import AsyncGenerator
 from datetime import date
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import reflex as rx
+from reflex.event import EventSpec
 from slipstream.components import (
     container,
     loading_card,
@@ -21,8 +23,10 @@ from slipstream.services import (
     RaceWeekend,
     ScheduleDay,
     ScheduledSession,
+    format_weekend_schedule,
     get_past_events,
     get_race_weekend,
+    get_track_time_offsets,
     has_session_results,
 )
 
@@ -42,6 +46,8 @@ class ResultsState(rx.State):
     archive_loading: bool = True
     error: str = ""
     archive_error: str = ""
+    viewer_timezone: str = "UTC"
+    track_time: bool = False
 
     @rx.var
     def has_race_weekend(self) -> bool:
@@ -78,7 +84,59 @@ class ResultsState(rx.State):
     @rx.var
     def schedule_column_count(self) -> str:
         """Give the schedule grid one column per date, with one as a minimum."""
-        return str(max(len(self.schedule_days), 1))
+        return str(max(len(self.display_schedule_days), 1))
+
+    @rx.var
+    def display_schedule_days(self) -> list[ScheduleDay]:
+        """Show sessions on the visitor's or the circuit's calendar dates."""
+        days, _ = format_weekend_schedule(
+            self.schedule_days,
+            self.viewer_timezone,
+            "track" if self.track_time else "my",
+        )
+        return days
+
+    @rx.var
+    def display_date_range(self) -> str:
+        """Keep the weekend date range in the selected timezone."""
+        _, date_range = format_weekend_schedule(
+            self.schedule_days,
+            self.viewer_timezone,
+            "track" if self.track_time else "my",
+        )
+        return date_range or self.race_weekend.get("date_range", "")
+
+    @rx.var
+    def track_time_available(self) -> bool:
+        """Allow circuit time only when its offset was published."""
+        return any(
+            session["track_offset_minutes"] is not None
+            for day in self.schedule_days
+            for session in day["sessions"]
+        )
+
+    @rx.event
+    def detect_viewer_timezone(self) -> EventSpec:
+        """Read the visitor's IANA timezone from their browser."""
+        return rx.call_script(
+            "Intl.DateTimeFormat().resolvedOptions().timeZone",
+            callback=ResultsState.set_viewer_timezone,
+        )
+
+    @rx.event
+    def set_viewer_timezone(self, timezone_name: str) -> None:
+        """Accept a browser timezone when the server can format it."""
+        try:
+            ZoneInfo(timezone_name)
+        except (TypeError, ValueError, ZoneInfoNotFoundError):
+            self.viewer_timezone = "UTC"
+        else:
+            self.viewer_timezone = timezone_name
+
+    @rx.event
+    def set_track_time(self, enabled: bool) -> None:
+        """Use circuit time when the switch is on and an offset exists."""
+        self.track_time = enabled and self.track_time_available
 
     @rx.event
     async def load_race_weekend(self) -> AsyncGenerator[None, None]:
@@ -96,6 +154,7 @@ class ResultsState(rx.State):
         self.archive_error = ""
         self.race_weekend = {}
         self.schedule_days = []
+        self.track_time = False
         self.past_events = []
         self.archive_season = str(current_date.year)
         yield
@@ -106,6 +165,9 @@ class ResultsState(rx.State):
                 get_race_weekend, current_date
             )
             if weekend is not None:
+                track_offsets = await asyncio.to_thread(
+                    get_track_time_offsets, weekend["season"], weekend["round"]
+                )
                 self.archive_season = weekend["season"]
                 # Keep the card's scalar values separate from its list of
                 # schedule rows, which has a different state type.
@@ -120,7 +182,21 @@ class ResultsState(rx.State):
                     "country_flag": weekend["country_flag"],
                     "date_range": weekend["date_range"],
                 }
-                self.schedule_days = weekend["schedule_days"]
+                self.schedule_days = [
+                    {
+                        **day,
+                        "sessions": [
+                            {
+                                **session,
+                                "track_offset_minutes": track_offsets.get(
+                                    session["name"]
+                                ),
+                            }
+                            for session in day["sessions"]
+                        ],
+                    }
+                    for day in weekend["schedule_days"]
+                ]
         except Exception:
             self.race_weekend = {}
             self.schedule_days = []
@@ -169,6 +245,7 @@ class ResultsState(rx.State):
                 {
                     "day": day["day"],
                     "date": day["date"],
+                    "date_iso": day["date_iso"],
                     "sessions": [
                         {
                             **session,
@@ -182,7 +259,11 @@ class ResultsState(rx.State):
             yield
 
 
-@rx.page("/results", "Results", on_load=ResultsState.load_race_weekend)
+@rx.page(
+    "/results",
+    "Results",
+    on_load=[ResultsState.detect_viewer_timezone, ResultsState.load_race_weekend],
+)
 def results() -> rx.Component:
     """Render the featured weekend and the matching season archive.
 
@@ -212,8 +293,12 @@ def results() -> rx.Component:
                             ResultsState.has_race_weekend,
                             race_weekend_card(
                                 ResultsState.race_weekend,
-                                ResultsState.schedule_days,
+                                ResultsState.display_schedule_days,
                                 ResultsState.schedule_column_count,
+                                ResultsState.display_date_range,
+                                ResultsState.track_time,
+                                ResultsState.track_time_available,
+                                ResultsState.set_track_time,
                             ),
                             status_card(
                                 "No upcoming race is scheduled",
