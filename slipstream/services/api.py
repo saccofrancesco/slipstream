@@ -1,11 +1,12 @@
 """Fetch and normalize Formula 1 schedules and championship standings."""
 
 import re
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from functools import lru_cache
 from math import ceil, isfinite
 from statistics import median
 from typing import Any, TypedDict
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # FastF1 provides the Ergast client used to retrieve calendars and standings.
 import fastf1
@@ -28,11 +29,13 @@ ergast: Ergast = Ergast()
 
 
 class ScheduledSession(TypedDict):
-    """One session and its published UTC start time."""
+    """One session with its UTC start and optional circuit time offset."""
 
     code: str
     name: str
     time: str
+    starts_at: str
+    track_offset_minutes: int | None
     results_available: bool
 
 
@@ -41,6 +44,7 @@ class ScheduleDay(TypedDict):
 
     day: str
     date: str
+    date_iso: str
     sessions: list[ScheduledSession]
 
 
@@ -1081,28 +1085,39 @@ def get_race_weekend(
                 continue
             sprint_qualifying_added = True
 
-        day_sessions = sessions_by_date.setdefault(session_date, {})
-        session_time = format_session_time(
+        session_start = parse_session_start(
+            session_date,
             session.get("time") if isinstance(session, dict) else None
+        )
+        day_sessions = sessions_by_date.setdefault(
+            session_start.date() if session_start is not None else session_date, {}
         )
         day_sessions[session_name] = {
             "code": session_code,
             "name": session_name,
-            "time": session_time,
+            "time": session_start.strftime("%H:%M") if session_start else "TBD",
+            "starts_at": session_start.isoformat() if session_start else "",
+            "track_offset_minutes": None,
             "results_available": False,
         }
 
     # The race's date and time are stored at the top level of the record.
-    sessions_by_date.setdefault(race_date, {})["Race"] = {
+    race_start = parse_session_start(race_date, race.get("time"))
+    sessions_by_date.setdefault(
+        race_start.date() if race_start is not None else race_date, {}
+    )["Race"] = {
         "code": "R",
         "name": "Race",
-        "time": format_session_time(race.get("time")),
+        "time": race_start.strftime("%H:%M") if race_start else "TBD",
+        "starts_at": race_start.isoformat() if race_start else "",
+        "track_offset_minutes": None,
         "results_available": False,
     }
     schedule_days: list[ScheduleDay] = [
         {
             "day": session_date.strftime("%A").upper(),
             "date": f"{session_date.day} {session_date.strftime('%b')}",
+            "date_iso": session_date.isoformat(),
             "sessions": sorted(
                 day_sessions.values(),
                 key=lambda session: (session["time"] == "TBD", session["time"]),
@@ -1170,6 +1185,146 @@ def format_session_time(value: object) -> str:
             timezone.utc
         ).time()
     return parsed_time.strftime("%H:%M")
+
+
+def parse_session_start(session_date: date, value: object) -> datetime | None:
+    """Combine a published date and time into a UTC session instant.
+
+    Args:
+        session_date: Date attached to the published session time.
+        value: A datetime, time, or ISO time string from the schedule.
+
+    Returns:
+        The UTC start, or ``None`` when the time is not published.
+    """
+    if isinstance(value, datetime):
+        start = value
+    else:
+        if isinstance(value, time):
+            parsed_time = value
+        elif isinstance(value, str):
+            try:
+                parsed_time = time.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        else:
+            return None
+        start = datetime.combine(session_date, parsed_time)
+
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    return start.astimezone(timezone.utc)
+
+
+def get_track_time_offsets(season: str, round_number: str) -> dict[str, int]:
+    """Read each session's circuit UTC offset from FastF1's local schedule.
+
+    Args:
+        season: Championship year.
+        round_number: Race round in that championship.
+
+    Returns:
+        UTC offsets in minutes, keyed by the displayed session name.
+    """
+    try:
+        event = fastf1.get_event(int(season), int(round_number), backend="fastf1")
+    except Exception:
+        return {}
+
+    offsets: dict[str, int] = {}
+    for number in range(1, 6):
+        name = event.get(f"Session{number}")
+        local_start = event.get(f"Session{number}Date")
+        if (
+            not isinstance(name, str)
+            or not isinstance(local_start, datetime)
+            or pd.isna(local_start)
+        ):
+            continue
+        offset: timedelta | None = local_start.utcoffset()
+        if offset is None:
+            continue
+        display_name = (
+            "Sprint Qualifying" if name == "Sprint Shootout" else name
+        )
+        offsets[display_name] = int(offset.total_seconds() // 60)
+    return offsets
+
+
+def format_weekend_schedule(
+    schedule_days: list[ScheduleDay], viewer_timezone: str, time_mode: str
+) -> tuple[list[ScheduleDay], str]:
+    """Group session starts by the selected timezone and format their dates.
+
+    Args:
+        schedule_days: Sessions carrying their original UTC instants.
+        viewer_timezone: Browser IANA timezone for ``my`` mode.
+        time_mode: ``my`` for the visitor or ``track`` for circuit time.
+
+    Returns:
+        Display days and the matching weekend date range.
+    """
+    try:
+        viewer_zone = ZoneInfo(viewer_timezone)
+    except (ValueError, ZoneInfoNotFoundError):
+        viewer_zone = timezone.utc
+
+    # A missing session-specific offset uses another published offset from
+    # the same event. This keeps a partially published schedule usable.
+    known_offsets = [
+        session["track_offset_minutes"]
+        for day in schedule_days
+        for session in day["sessions"]
+        if session["track_offset_minutes"] is not None
+    ]
+    fallback_offset = known_offsets[0] if known_offsets else 0
+    grouped: dict[date, list[ScheduledSession]] = {}
+    for day in schedule_days:
+        original_date = date.fromisoformat(day["date_iso"])
+        for session in day["sessions"]:
+            start = session["starts_at"]
+            if start:
+                utc_start = datetime.fromisoformat(start)
+                if time_mode == "track":
+                    offset = session["track_offset_minutes"]
+                    target_zone = timezone(
+                        timedelta(
+                            minutes=offset if offset is not None else fallback_offset
+                        )
+                    )
+                else:
+                    target_zone = viewer_zone
+                local_start = utc_start.astimezone(target_zone)
+                display_date = local_start.date()
+                display_time = local_start.strftime("%H:%M")
+            else:
+                display_date = original_date
+                display_time = "TBD"
+            grouped.setdefault(display_date, []).append(
+                {**session, "time": display_time}
+            )
+
+    display_days: list[ScheduleDay] = [
+        {
+            "day": day_date.strftime("%A").upper(),
+            "date": f"{day_date.day} {day_date.strftime('%b')}",
+            "date_iso": day_date.isoformat(),
+            "sessions": sorted(
+                sessions, key=lambda session: session["starts_at"] or "9999"
+            ),
+        }
+        for day_date, sessions in sorted(grouped.items())
+    ]
+    if not display_days:
+        return [], ""
+    first_day = date.fromisoformat(display_days[0]["date_iso"])
+    last_day = date.fromisoformat(display_days[-1]["date_iso"])
+    date_range = (
+        f"{first_day.strftime('%d %b')} – {last_day.strftime('%d %b %Y')}"
+        if first_day != last_day
+        else first_day.strftime("%d %b %Y")
+    )
+    return display_days, date_range
 
 
 # Fallback colors keyed by constructor IDs in the standings response. The
