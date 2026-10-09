@@ -140,10 +140,10 @@ class ResultsState(rx.State):
 
     @rx.event
     async def load_race_weekend(self) -> AsyncGenerator[None, None]:
-        """Load the featured weekend, then its season's past events.
+        """Load the weekend with available result links, then its archive.
 
         Yields:
-            Loading feedback, followed by the featured weekend when ready.
+            Loading feedback, followed by the complete featured weekend.
         """
         current_date: date = date.today()
         # Clear the previous result before yielding so a reload cannot show
@@ -197,6 +197,46 @@ class ResultsState(rx.State):
                     }
                     for day in weekend["schedule_days"]
                 ]
+                if weekend["status"] == "current":
+                    # Only published driver rows make a session linkable.
+                    # Wait for every independent check before showing the card.
+                    sessions: list[ScheduledSession] = [
+                        session
+                        for day in self.schedule_days
+                        for session in day["sessions"]
+                    ]
+                    checks = await asyncio.gather(
+                        *(
+                            asyncio.to_thread(
+                                has_session_results,
+                                weekend["season"],
+                                weekend["round"],
+                                session["code"],
+                            )
+                            for session in sessions
+                        ),
+                        return_exceptions=True,
+                    )
+                    available_codes: set[str] = {
+                        session["code"]
+                        for session, available in zip(sessions, checks)
+                        if available is True
+                    }
+                    self.schedule_days = [
+                        {
+                            **day,
+                            "sessions": [
+                                {
+                                    **session,
+                                    "results_available": (
+                                        session["code"] in available_codes
+                                    ),
+                                }
+                                for session in day["sessions"]
+                            ],
+                        }
+                        for day in self.schedule_days
+                    ]
         except Exception:
             self.race_weekend = {}
             self.schedule_days = []
@@ -215,48 +255,6 @@ class ResultsState(rx.State):
         finally:
             self.archive_loading = False
         yield
-
-        if self.race_weekend.get("status") == "current":
-            # Only a published driver result table makes a session linkable.
-            # Treat feed failures independently so other sessions can appear.
-            sessions: list[ScheduledSession] = [
-                session
-                for day in self.schedule_days
-                for session in day["sessions"]
-            ]
-            checks = await asyncio.gather(
-                *(
-                    asyncio.to_thread(
-                        has_session_results,
-                        self.race_weekend["season"],
-                        self.race_weekend["round"],
-                        session["code"],
-                    )
-                    for session in sessions
-                ),
-                return_exceptions=True,
-            )
-            available_codes: set[str] = {
-                session["code"]
-                for session, available in zip(sessions, checks)
-                if available is True
-            }
-            self.schedule_days = [
-                {
-                    "day": day["day"],
-                    "date": day["date"],
-                    "date_iso": day["date_iso"],
-                    "sessions": [
-                        {
-                            **session,
-                            "results_available": session["code"] in available_codes,
-                        }
-                        for session in day["sessions"]
-                    ],
-                }
-                for day in self.schedule_days
-            ]
-            yield
 
 
 @rx.page(
@@ -283,7 +281,7 @@ def results() -> rx.Component:
                 # an empty result has its own explanatory status card.
                 rx.cond(
                     ResultsState.loading,
-                    loading_card("Checking the Formula 1 calendar…"),
+                    loading_card("Preparing the race weekend schedule…"),
                     rx.cond(
                         ResultsState.error != "",
                         status_card(
