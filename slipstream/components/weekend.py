@@ -10,23 +10,19 @@ from .layout import loading_card
 def _schedule_session_row(
     session: rx.Var[ScheduledSession], weekend: rx.Var[dict[str, str]]
 ) -> rx.Component:
-    """Keep a session's name and UTC start time on one aligned row."""
+    """Keep the session, available results link, and UTC time on one row."""
     return rx.hstack(
-        rx.text(
-            session["name"],
-            size="2",
-            weight="medium",
-            color=rx.color("gray", 12),
-        ),
-        rx.vstack(
+        rx.hstack(
             rx.text(
-                session["time"],
+                session["name"],
                 size="2",
-                weight="bold",
-                color=rx.color("accent", 11),
+                weight="medium",
+                color=rx.color("gray", 12),
+                overflow="hidden",
+                text_overflow="ellipsis",
                 white_space="nowrap",
-                font_variant_numeric="tabular-nums",
-                text_align="right",
+                min_width="0",
+                title=session["name"],
             ),
             rx.cond(
                 session["results_available"],
@@ -38,15 +34,27 @@ def _schedule_session_row(
                     color=rx.color("accent", 11),
                     white_space="nowrap",
                     aria_label=f"View {session['name']} results",
+                    flex_shrink="0",
                 ),
                 rx.fragment(),
             ),
-            align="end",
-            spacing="1",
+            spacing="2",
+            align="center",
+            min_width="0",
+            flex="1",
+        ),
+        rx.text(
+            session["time"],
+            size="2",
+            weight="bold",
+            color=rx.color("accent", 11),
+            white_space="nowrap",
+            font_variant_numeric="tabular-nums",
+            text_align="right",
             flex_shrink="0",
         ),
         justify="between",
-        align="start",
+        align="center",
         spacing="3",
         width="100%",
     )
