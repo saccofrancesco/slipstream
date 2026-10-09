@@ -1,5 +1,6 @@
 """Fetch and normalize Formula 1 schedules and championship standings."""
 
+import json
 import re
 from datetime import date, datetime, time, timedelta, timezone
 from functools import lru_cache
@@ -12,6 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import fastf1
 import fastf1.plotting
 import pandas as pd
+import requests
 from fastf1.core import Session
 from fastf1.ergast import Ergast
 
@@ -34,9 +36,18 @@ class ScheduledSession(TypedDict):
     code: str
     name: str
     time: str
+    end_time: str
     starts_at: str
+    ends_at: str
     track_offset_minutes: int | None
     results_available: bool
+
+
+class TrackSessionDetails(TypedDict):
+    """Circuit offset and optional scheduled UTC end for one session."""
+
+    offset_minutes: int
+    ends_at: str
 
 
 class ScheduleDay(TypedDict):
@@ -1096,7 +1107,9 @@ def get_race_weekend(
             "code": session_code,
             "name": session_name,
             "time": session_start.strftime("%H:%M") if session_start else "TBD",
+            "end_time": "",
             "starts_at": session_start.isoformat() if session_start else "",
+            "ends_at": "",
             "track_offset_minutes": None,
             "results_available": False,
         }
@@ -1109,7 +1122,9 @@ def get_race_weekend(
         "code": "R",
         "name": "Race",
         "time": race_start.strftime("%H:%M") if race_start else "TBD",
+        "end_time": "",
         "starts_at": race_start.isoformat() if race_start else "",
+        "ends_at": "",
         "track_offset_minutes": None,
         "results_available": False,
     }
@@ -1251,6 +1266,81 @@ def get_track_time_offsets(season: str, round_number: str) -> dict[str, int]:
     return offsets
 
 
+def get_track_session_details(
+    season: str, round_number: str
+) -> dict[str, TrackSessionDetails]:
+    """Read circuit offsets and published session ends from F1's schedule.
+
+    Args:
+        season: Championship year.
+        round_number: Race round in that championship.
+
+    Returns:
+        Session details keyed by displayed name. Missing ends stay empty.
+    """
+    try:
+        response = requests.get(
+            f"https://livetiming.formula1.com/static/{int(season)}/Index.json",
+            timeout=10,
+        )
+        response.raise_for_status()
+        # The live timing index includes a UTF-8 BOM, which response.json()
+        # does not accept with the requests default decoder.
+        payload: dict[str, Any] = json.loads(
+            response.content.decode("utf-8-sig")
+        )
+        meetings: list[dict[str, Any]] = payload.get("Meetings", [])
+        meeting = next(
+            event
+            for event in meetings
+            if event.get("Number") == int(round_number)
+        )
+        details: dict[str, TrackSessionDetails] = {}
+        for session in meeting.get("Sessions", []):
+            name = session.get("Name")
+            if not isinstance(name, str) or not session.get("GmtOffset"):
+                continue
+            offset = timedelta(
+                seconds=pd.Timedelta(session["GmtOffset"]).total_seconds()
+            )
+            circuit_zone = timezone(offset)
+            if name == "Sprint Shootout":
+                name = "Sprint Qualifying"
+            elif name == "Sprint Qualifying" and int(season) <= 2022:
+                name = "Sprint"
+
+            ends_at = ""
+            raw_end = session.get("EndDate")
+            raw_start = session.get("StartDate")
+            if isinstance(raw_end, str) and isinstance(raw_start, str):
+                try:
+                    end = datetime.fromisoformat(raw_end)
+                    start = datetime.fromisoformat(raw_start)
+                    if end.tzinfo is None:
+                        end = end.replace(tzinfo=circuit_zone)
+                    if start.tzinfo is None:
+                        start = start.replace(tzinfo=circuit_zone)
+                    if end > start:
+                        ends_at = end.astimezone(timezone.utc).isoformat()
+                except ValueError:
+                    pass
+            details[name] = {
+                "offset_minutes": int(offset.total_seconds() // 60),
+                "ends_at": ends_at,
+            }
+        if details:
+            return details
+    except (requests.RequestException, ValueError, KeyError, StopIteration):
+        pass
+
+    # FastF1's public schedule still provides circuit offsets when the raw
+    # live timing index or its EndDate fields are unavailable.
+    return {
+        name: {"offset_minutes": offset, "ends_at": ""}
+        for name, offset in get_track_time_offsets(season, round_number).items()
+    }
+
+
 def format_weekend_schedule(
     schedule_days: list[ScheduleDay], viewer_timezone: str, time_mode: str
 ) -> tuple[list[ScheduleDay], str]:
@@ -1279,10 +1369,12 @@ def format_weekend_schedule(
     ]
     fallback_offset = known_offsets[0] if known_offsets else 0
     grouped: dict[date, list[ScheduledSession]] = {}
+    last_end_date: date | None = None
     for day in schedule_days:
         original_date = date.fromisoformat(day["date_iso"])
         for session in day["sessions"]:
             start = session["starts_at"]
+            display_end_time = ""
             if start:
                 utc_start = datetime.fromisoformat(start)
                 if time_mode == "track":
@@ -1297,11 +1389,21 @@ def format_weekend_schedule(
                 local_start = utc_start.astimezone(target_zone)
                 display_date = local_start.date()
                 display_time = local_start.strftime("%H:%M")
+                if session["ends_at"]:
+                    utc_end = datetime.fromisoformat(session["ends_at"])
+                    if utc_end > utc_start:
+                        local_end = utc_end.astimezone(target_zone)
+                        day_offset = (local_end.date() - display_date).days
+                        display_end_time = local_end.strftime("%H:%M")
+                        if day_offset > 0:
+                            display_end_time += f" (+{day_offset}d)"
+                        if last_end_date is None or local_end.date() > last_end_date:
+                            last_end_date = local_end.date()
             else:
                 display_date = original_date
                 display_time = "TBD"
             grouped.setdefault(display_date, []).append(
-                {**session, "time": display_time}
+                {**session, "time": display_time, "end_time": display_end_time}
             )
 
     display_days: list[ScheduleDay] = [
@@ -1319,6 +1421,8 @@ def format_weekend_schedule(
         return [], ""
     first_day = date.fromisoformat(display_days[0]["date_iso"])
     last_day = date.fromisoformat(display_days[-1]["date_iso"])
+    if last_end_date is not None:
+        last_day = max(last_day, last_end_date)
     date_range = (
         f"{first_day.strftime('%d %b')} – {last_day.strftime('%d %b %Y')}"
         if first_day != last_day
