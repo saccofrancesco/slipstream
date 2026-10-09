@@ -17,8 +17,10 @@ from .api import (
     get_event_details,
     get_past_events,
     get_race_weekend,
+    get_track_time_offsets,
     get_session_classification,
     get_session_laps,
+    format_weekend_schedule,
     has_session_results,
     get_driver_standings,
 )
@@ -40,8 +42,10 @@ __all__: list[str] = [
     "get_event_details",
     "get_past_events",
     "get_race_weekend",
+    "get_track_time_offsets",
     "get_session_classification",
     "get_session_laps",
+    "format_weekend_schedule",
     "has_session_results",
     "get_driver_standings",
 ]
