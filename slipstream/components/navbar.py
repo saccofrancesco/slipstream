@@ -57,7 +57,18 @@ def navbar(active_section: str | None = None) -> rx.Component:
         container(
             rx.hstack(
                 rx.link(
-                    rx.heading("SLIPSTREAM", as_="h2", size="7", weight="bold"),
+                    rx.hstack(
+                        rx.image(
+                            src=rx.color_mode_cond(
+                                "/icons/light.svg", "/icons/dark.svg"
+                            ),
+                            alt="",
+                            width="7rem",
+                            height="auto",
+                        ),
+                        rx.heading("SLIPSTREAM", as_="h2", size="7", weight="bold"),
+                        align="center",
+                    ),
                     href="/",
                     underline="none",
                     style={
