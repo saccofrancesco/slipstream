@@ -10,7 +10,7 @@ from .layout import loading_card
 def _schedule_session_row(
     session: rx.Var[ScheduledSession], weekend: rx.Var[dict[str, str]]
 ) -> rx.Component:
-    """Keep the session, available results link, and UTC time on one row."""
+    """Keep the session, available results link, and time range on one row."""
     return rx.hstack(
         rx.hstack(
             rx.text(
@@ -44,7 +44,11 @@ def _schedule_session_row(
             flex="1",
         ),
         rx.text(
-            session["time"],
+            rx.cond(
+                session["end_time"] != "",
+                f"{session['time']} - {session['end_time']}",
+                session["time"],
+            ),
             size="2",
             weight="bold",
             color=rx.color("accent", 11),
