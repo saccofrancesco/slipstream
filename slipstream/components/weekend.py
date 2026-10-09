@@ -108,6 +108,10 @@ def race_weekend_card(
     weekend: rx.Var[dict[str, str]],
     schedule_days: rx.Var[list[ScheduleDay]],
     schedule_column_count: rx.Var[str],
+    display_date_range: rx.Var[str],
+    track_time: rx.Var[bool],
+    track_time_available: rx.Var[bool],
+    on_track_time_change: rx.EventHandler,
 ) -> rx.Component:
     """Render the selected event details and its schedule.
 
@@ -115,6 +119,10 @@ def race_weekend_card(
         weekend: Reactive event fields such as race and circuit names.
         schedule_days: Reactive schedule rows, one for each event date.
         schedule_column_count: Reactive number of grid columns as a string.
+        display_date_range: Weekend dates in the selected timezone.
+        track_time: Whether circuit time is selected.
+        track_time_available: Whether the circuit offset was published.
+        on_track_time_change: Handler for toggling circuit time.
 
     Returns:
         A card with the event identity, venue, dates, and sessions.
@@ -198,7 +206,7 @@ def race_weekend_card(
             ),
             rx.hstack(
                 rx.icon("calendar-days", size=20, color=rx.color("accent", 11)),
-                rx.text(weekend["date_range"], weight="medium"),
+                rx.text(display_date_range, weight="medium"),
                 align="center",
                 spacing="3",
                 width="100%",
@@ -215,7 +223,18 @@ def race_weekend_card(
                         color=rx.color("accent", 11),
                         letter_spacing="0.14em",
                     ),
-                    rx.text("ALL TIMES UTC", size="1", color=rx.color("gray", 10)),
+                    rx.hstack(
+                        rx.text("Track time", size="2", color=rx.color("gray", 11)),
+                        rx.switch(
+                            checked=track_time,
+                            on_change=on_track_time_change,
+                            disabled=~track_time_available,
+                            aria_label="Track time",
+                            size="1",
+                        ),
+                        align="center",
+                        spacing="2",
+                    ),
                     justify="between",
                     align="center",
                     width="100%",
