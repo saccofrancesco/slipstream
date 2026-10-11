@@ -1,7 +1,7 @@
 """Team championship page and its loading state."""
 
 import asyncio
-from collections.abc import AsyncGenerator
+import logging
 
 # Reflex provides state, event, and component primitives for this page.
 import reflex as rx
@@ -10,10 +10,14 @@ import reflex as rx
 from slipstream.components import container, navbar, page_header
 from slipstream.components.championship import championship_section
 from slipstream.services import (
+    call_data_source,
     get_available_seasons,
     get_completed_races,
     get_constructor_standings,
+    UpstreamDataError,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class ConstructorsState(rx.State):
@@ -22,6 +26,7 @@ class ConstructorsState(rx.State):
     standings: list[dict[str, str]] = []
     loading: bool = False
     error: str = ""
+    load_id: int = 0
 
     @rx.var
     def podium_standings(self) -> list[dict[str, str]]:
@@ -43,46 +48,46 @@ class ConstructorsState(rx.State):
         """Report whether any constructor standings were loaded."""
         return bool(self.standings)
 
-    @rx.event
-    async def load_standings(self) -> AsyncGenerator[None, None]:
-        """Load the newest completed race's constructor standings.
-
-        Yields:
-            A state update after loading begins so the page can show its spinner.
-        """
-        # Set the loading state before starting the network request.
-        self.loading = True
-        self.error = ""
-        self.standings = []
-        yield
-        try:
-            # Run the blocking API client call outside the event loop.
-            seasons = await asyncio.to_thread(get_available_seasons, 1958)
-            if not seasons:
-                self.error = "Championship data is not available yet."
-                return
-            season = seasons[0]
-            races = await asyncio.to_thread(get_completed_races, season)
-            if not races:
-                self.error = "No completed races are available yet."
-                return
-            latest_race = races[-1]
-            self.standings = await asyncio.to_thread(
-                get_constructor_standings,
-                int(season),
-                int(latest_race["round"]),
-            )
-            if not self.standings:
-                self.error = "No constructor standings are available for this race."
-        except Exception:
-            # Keep the UI usable and show a short message if loading fails.
+    @rx.event(background=True)
+    async def load_standings(self) -> None:
+        """Load current constructor standings outside the Reflex state lock."""
+        async with self:
+            self.load_id += 1
+            load_id = self.load_id
+            self.loading = True
+            self.error = ""
             self.standings = []
-            self.error = (
-                "Could not load constructor championship data. Please try again."
+        try:
+            seasons = await asyncio.to_thread(
+                call_data_source, get_available_seasons, 1958, fresh=True
             )
-        finally:
-            # Clear the loading indicator on both success and failure.
-            self.loading = False
+            if not seasons:
+                rows, error = [], "Championship data is not available yet."
+            else:
+                races = await asyncio.to_thread(
+                    call_data_source, get_completed_races, seasons[0], fresh=True
+                )
+                if not races:
+                    rows, error = [], "No completed races are available yet."
+                else:
+                    rows = await asyncio.to_thread(
+                        call_data_source,
+                        get_constructor_standings,
+                        int(seasons[0]),
+                        int(races[-1]["round"]),
+                        fresh=True,
+                    )
+                    if not rows:
+                        raise UpstreamDataError("Completed-race constructor standings were empty.")
+                    error = ""
+        except Exception:
+            logger.exception("Could not load constructor standings")
+            rows, error = [], "Could not load constructor championship data. Please try again."
+        async with self:
+            if self.load_id == load_id:
+                self.standings = rows
+                self.error = error
+                self.loading = False
 
 
 @rx.page("/constructors", "Teams", on_load=ConstructorsState.load_standings)

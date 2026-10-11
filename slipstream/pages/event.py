@@ -1,7 +1,8 @@
 """Archive event detail route and its selected-session classification state."""
 
 import asyncio
-from collections.abc import AsyncGenerator
+import logging
+from datetime import date
 
 import reflex as rx
 
@@ -21,10 +22,13 @@ from slipstream.services import (
     LapPoint,
     SessionLaps,
     SessionOption,
+    call_data_source,
     get_event_details,
     get_session_classification,
     get_session_laps,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class EventState(rx.State):
@@ -46,6 +50,7 @@ class EventState(rx.State):
     laps_loading: bool = False
     laps_loaded: bool = False
     laps_error: str = ""
+    load_id: int = 0
 
     @rx.var
     def has_event(self) -> bool:
@@ -177,13 +182,20 @@ class EventState(rx.State):
         """Return how many drivers are currently plotted."""
         return len(self.selected_drivers)
 
-    @rx.event
-    async def change_tab(self, tab: str) -> AsyncGenerator[None, None]:
-        """Load the selected session's laps the first time its tab opens."""
-        self.active_tab = tab
-        if tab == "laps" and self.event and not self.laps_loaded and not self.laps_loading:
-            async for update in self._load_laps(self.selected_session):
-                yield update
+    @rx.event(background=True)
+    async def change_tab(self, tab: str) -> None:
+        """Load laps without holding the state lock after opening the tab."""
+        async with self:
+            self.active_tab = tab
+            if tab != "laps" or not self.event or self.laps_loaded or self.laps_loading:
+                return
+            self.laps_loading = True
+            load_id = self.load_id
+            season, round_number = self.event_season, self.round_number
+            session_code = self.selected_session
+            completed = self._session_completed(session_code)
+            fresh = self._event_is_current()
+        await self._fetch_laps(load_id, season, round_number, session_code, completed, fresh)
 
     @rx.event
     def toggle_driver(self, code: str) -> None:
@@ -200,142 +212,207 @@ class EventState(rx.State):
         """Include or hide flagged laps in the chart."""
         self.show_outliers = value
 
-    @rx.event
-    async def load_event(self) -> AsyncGenerator[None, None]:
-        """Load route event metadata, then its default Race classification."""
-        params: dict[str, str] = self.router.page.params
-        self.event_season = params.get("season", "")
-        self.round_number = params.get("round", "")
-        self.event = {}
-        self.sessions = []
-        self.selected_session = "R"
-        self.classification = []
-        self.error = ""
-        self.loading = True
-        self.active_tab = "session"
-        self.lap_drivers = []
-        self.lap_points = []
-        self.selected_drivers = []
-        self.show_outliers = False
-        self.laps_loading = False
-        self.laps_loaded = False
-        self.laps_error = ""
-        yield
+    def _session_completed(self, session_code: str) -> bool:
+        """Read the selected session's published completion flag."""
+        return any(
+            session["code"] == session_code and session["completed"]
+            for session in self.sessions
+        )
+
+    def _event_is_current(self) -> bool:
+        """Keep the ongoing weekend fresh instead of using archived timing."""
+        return self.event.get("race_date_iso", "") >= date.today().isoformat()
+
+    @rx.event(background=True)
+    async def load_event(self) -> None:
+        """Load route metadata, then the selected session's classification."""
+        async with self:
+            params: dict[str, str] = self.router.page.params
+            season = params.get("season", "")
+            round_number = params.get("round", "")
+            requested_session = self.router.url.query_parameters.get("session", "R")
+            self.load_id += 1
+            load_id = self.load_id
+            self.event_season = season
+            self.round_number = round_number
+            self.event = {}
+            self.sessions = []
+            self.selected_session = "R"
+            self.classification = []
+            self.error = ""
+            self.loading = True
+            self.active_tab = "session"
+            self.lap_drivers = []
+            self.lap_points = []
+            self.selected_drivers = []
+            self.show_outliers = False
+            self.laps_loading = False
+            self.laps_loaded = False
+            self.laps_error = ""
 
         try:
             details: EventDetails | None = await asyncio.to_thread(
-                get_event_details, self.event_season, self.round_number
+                call_data_source, get_event_details, season, round_number, fresh=True
             )
         except Exception:
-            self.error = "Could not load this archive event. Please try again."
-            self.loading = False
+            logger.exception("Could not load event details for %s/%s", season, round_number)
+            async with self:
+                if self.load_id == load_id:
+                    self.error = "Could not load this archive event. Please try again."
+                    self.loading = False
             return
 
-        if details is None:
-            self.error = "The requested archive event could not be found."
-            self.loading = False
-            return
-
-        self.event = {
-            "season": details["season"],
-            "round": details["round"],
-            "race_name": details["race_name"],
-            "race_date": details["race_date"],
-            "circuit_name": details["circuit_name"],
-            "locality": details["locality"],
-            "country": details["country"],
-            "country_flag": details["country_flag"],
-            "date_range": details["date_range"],
-        }
-        self.sessions = details["sessions"]
-        requested_session: str = self.router.url.query_parameters.get("session", "R")
-        if any(session["code"] == requested_session for session in self.sessions):
-            self.selected_session = requested_session
-        yield
-
-        await self._load_classification(self.selected_session)
-        self.loading = False
-
-    @rx.event
-    async def select_session(
-        self, session_code: str
-    ) -> AsyncGenerator[None, None]:
-        """Replace the visible classification with a selected session's rows.
-
-        Args:
-            session_code: FastF1 identifier selected from the event schedule.
-
-        Yields:
-            A state update that clears old rows and displays loading feedback.
-        """
-        if not self.event or not any(
-            session["code"] == session_code for session in self.sessions
-        ):
-            return
-
-        self.selected_session = session_code
-        self.classification = []
-        self.error = ""
-        self.loading = True
-        self.lap_drivers = []
-        self.lap_points = []
-        self.selected_drivers = []
-        self.laps_loading = self.active_tab == "laps"
-        self.laps_loaded = False
-        self.laps_error = ""
-        yield
-
-        await self._load_classification(session_code)
-        self.loading = False
-        if self.active_tab == "laps":
-            async for update in self._load_laps(session_code):
-                yield update
-
-    async def _load_laps(self, session_code: str) -> AsyncGenerator[None, None]:
-        """Fetch the selected session's timed laps without blocking the UI."""
-        self.laps_loading = True
-        self.laps_error = ""
-        yield
-        try:
-            data: SessionLaps = await asyncio.to_thread(
-                get_session_laps,
-                self.event_season,
-                self.round_number,
-                session_code,
-            )
-        except Exception:
-            if self.selected_session != session_code:
+        async with self:
+            if self.load_id != load_id:
                 return
+            if details is None:
+                self.error = "The requested archive event could not be found."
+                self.loading = False
+                return
+            self.event = {
+                key: value for key, value in details.items() if key != "sessions"
+            }
+            self.sessions = details["sessions"]
+            if any(session["code"] == requested_session for session in self.sessions):
+                self.selected_session = requested_session
+            session_code = self.selected_session
+            completed = self._session_completed(session_code)
+            fresh = self._event_is_current()
+        await self._fetch_classification(
+            load_id, season, round_number, session_code, completed, fresh
+        )
+
+    @rx.event(background=True)
+    async def select_session(self, session_code: str) -> None:
+        """Load a selection and ignore any previous in-flight response."""
+        async with self:
+            if not self.event or not any(
+                session["code"] == session_code for session in self.sessions
+            ):
+                return
+            self.load_id += 1
+            load_id = self.load_id
+            self.selected_session = session_code
+            self.classification = []
+            self.error = ""
+            self.loading = True
             self.lap_drivers = []
             self.lap_points = []
-            self.laps_error = "Could not load this session's lap times. Please try again."
-        else:
-            if self.selected_session != session_code:
-                return
-            self.lap_drivers = data["drivers"]
-            self.lap_points = data["laps"]
-            self.laps_loaded = bool(data["laps"])
-        self.laps_loading = False
+            self.selected_drivers = []
+            self.laps_loading = self.active_tab == "laps"
+            self.laps_loaded = False
+            self.laps_error = ""
+            load_laps = self.active_tab == "laps"
+            season, round_number = self.event_season, self.round_number
+            completed = self._session_completed(session_code)
+            fresh = self._event_is_current()
+        requests = [
+            self._fetch_classification(
+                load_id, season, round_number, session_code, completed, fresh
+            )
+        ]
+        if load_laps:
+            requests.append(
+                self._fetch_laps(
+                    load_id, season, round_number, session_code, completed, fresh
+                )
+            )
+        await asyncio.gather(*requests)
 
-    async def _load_classification(self, session_code: str) -> None:
-        """Fetch one session's driver rows without blocking the event loop."""
+    async def _fetch_classification(
+        self, load_id: int, season: str, round_number: str,
+        session_code: str, completed: bool, fresh: bool,
+    ) -> None:
+        """Fetch classification outside the lock and apply it if still selected."""
         try:
             rows: list[DriverClassification] = await asyncio.to_thread(
+                call_data_source,
                 get_session_classification,
-                self.event_season,
-                self.round_number,
+                season,
+                round_number,
                 session_code,
+                completed,
+                fresh=fresh,
             )
         except Exception:
-            self.classification = []
-            self.error = "Could not load this session's classification. Please try again."
+            logger.exception("Could not load classification for %s/%s/%s", season, round_number, session_code)
+            async with self:
+                if self.load_id == load_id and self.selected_session == session_code:
+                    self.classification = []
+                    self.error = "Could not load this session's classification. Please try again."
+                    self.loading = False
             return
+        async with self:
+            if self.load_id == load_id and self.selected_session == session_code:
+                self.classification = rows
+                self.error = ""
+                self.loading = False
 
-        self.classification = rows
-        if not rows:
-            self.error = (
-                "The timing feed has not published results for this session."
+    async def _fetch_laps(
+        self, load_id: int, season: str, round_number: str,
+        session_code: str, completed: bool, fresh: bool,
+    ) -> None:
+        """Fetch timed laps outside the lock and apply them if still selected."""
+        try:
+            data: SessionLaps = await asyncio.to_thread(
+                call_data_source,
+                get_session_laps,
+                season,
+                round_number,
+                session_code,
+                completed,
+                fresh=fresh,
             )
+        except Exception:
+            logger.exception("Could not load laps for %s/%s/%s", season, round_number, session_code)
+            async with self:
+                if self.load_id == load_id and self.selected_session == session_code:
+                    self.lap_drivers = []
+                    self.lap_points = []
+                    self.laps_error = "Could not load this session's lap times. Please try again."
+                    self.laps_loading = False
+            return
+        async with self:
+            if self.load_id == load_id and self.selected_session == session_code:
+                self.lap_drivers = data["drivers"]
+                self.lap_points = data["laps"]
+                self.laps_loaded = bool(data["laps"])
+                self.laps_error = ""
+                self.laps_loading = False
+
+    @rx.event(background=True)
+    async def retry_classification(self) -> None:
+        """Retry the selected classification after a temporary failure."""
+        async with self:
+            if not self.event:
+                return
+            self.error = ""
+            self.loading = True
+            load_id = self.load_id
+            season, round_number = self.event_season, self.round_number
+            session_code = self.selected_session
+            completed = self._session_completed(session_code)
+            fresh = self._event_is_current()
+        await self._fetch_classification(
+            load_id, season, round_number, session_code, completed, fresh
+        )
+
+    @rx.event(background=True)
+    async def retry_laps(self) -> None:
+        """Retry the selected session's laps after a temporary failure."""
+        async with self:
+            if not self.event:
+                return
+            self.laps_error = ""
+            self.laps_loading = True
+            load_id = self.load_id
+            season, round_number = self.event_season, self.round_number
+            session_code = self.selected_session
+            completed = self._session_completed(session_code)
+            fresh = self._event_is_current()
+        await self._fetch_laps(
+            load_id, season, round_number, session_code, completed, fresh
+        )
 
 
 @rx.page("/results/[season]/[round]", "Grand Prix results", on_load=EventState.load_event)
@@ -395,6 +472,7 @@ def event_results() -> rx.Component:
                                         EventState.error,
                                         EventState.classification,
                                         EventState.has_classification,
+                                        EventState.retry_classification,
                                     ),
                                     value="session",
                                     width="100%",
@@ -413,6 +491,7 @@ def event_results() -> rx.Component:
                                         EventState.laps_loading,
                                         EventState.laps_loaded,
                                         EventState.laps_error,
+                                        EventState.retry_laps,
                                     ),
                                     value="laps",
                                     width="100%",
@@ -434,8 +513,14 @@ def event_results() -> rx.Component:
                         loading_card(
                             "Looking up the event schedule and session results…"
                         ),
-                        status_card(
-                            "Event unavailable", EventState.error
+                        rx.vstack(
+                            status_card("Event unavailable", EventState.error),
+                            rx.button(
+                                "Retry event", on_click=EventState.load_event,
+                                variant="soft",
+                            ),
+                            align="start",
+                            spacing="2",
                         ),
                     ),
                 ),

@@ -205,6 +205,7 @@ def laps_section(
     loading: rx.Var[bool],
     loaded: rx.Var[bool],
     error: rx.Var[str],
+    on_retry: rx.EventHandler,
 ) -> rx.Component:
     """Render the selected session's controls and interactive lap chart."""
     time_formatter = _lap_time_formatter()
@@ -242,7 +243,12 @@ def laps_section(
             loading_card("Loading lap times for this session…"),
             rx.cond(
                 error != "",
-                status_card("Lap times unavailable", error),
+                rx.vstack(
+                    status_card("Lap times unavailable", error),
+                    rx.button("Retry lap times", on_click=on_retry, variant="soft"),
+                    align="start",
+                    spacing="2",
+                ),
                 rx.cond(
                     loaded,
                     rx.flex(

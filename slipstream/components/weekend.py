@@ -8,7 +8,9 @@ from .layout import loading_card
 
 
 def _schedule_session_row(
-    session: rx.Var[ScheduledSession], weekend: rx.Var[dict[str, str]]
+    session: rx.Var[ScheduledSession],
+    weekend: rx.Var[dict[str, str]],
+    on_retry_result: rx.EventHandler,
 ) -> rx.Component:
     """Keep the session, available results link, and time range on one row."""
     return rx.hstack(
@@ -25,7 +27,7 @@ def _schedule_session_row(
                 title=session["name"],
             ),
             rx.cond(
-                session["results_available"],
+                session["result_status"] == "available",
                 rx.link(
                     "Results →",
                     href=f"/results/{weekend['season']}/{weekend['round']}?session={session['code']}",
@@ -36,7 +38,32 @@ def _schedule_session_row(
                     aria_label=f"View {session['name']} results",
                     flex_shrink="0",
                 ),
-                rx.fragment(),
+                rx.cond(
+                    session["result_status"] == "error",
+                    rx.hstack(
+                        rx.text("Check failed", size="1", color=rx.color("gray", 10)),
+                        rx.button(
+                            "Retry",
+                            on_click=on_retry_result(session["code"]),
+                            size="1",
+                            variant="ghost",
+                        ),
+                        spacing="1",
+                    ),
+                    rx.cond(
+                        weekend["status"] == "current",
+                        rx.text(
+                            rx.cond(
+                                session["result_status"] == "pending",
+                                rx.cond(session["result_check_due"], "Checking…", "Scheduled"),
+                                "Not published",
+                            ),
+                            size="1",
+                            color=rx.color("gray", 10),
+                        ),
+                        rx.fragment(),
+                    ),
+                ),
             ),
             spacing="2",
             align="center",
@@ -65,7 +92,9 @@ def _schedule_session_row(
 
 
 def _schedule_day_column(
-    day: rx.Var[ScheduleDay], weekend: rx.Var[dict[str, str]]
+    day: rx.Var[ScheduleDay],
+    weekend: rx.Var[dict[str, str]],
+    on_retry_result: rx.EventHandler,
 ) -> rx.Component:
     """Render one date and its sessions inside the weekend card.
 
@@ -89,7 +118,9 @@ def _schedule_day_column(
             rx.vstack(
                 rx.foreach(
                     day["sessions"],
-                    lambda session: _schedule_session_row(session, weekend),
+                    lambda session: _schedule_session_row(
+                        session, weekend, on_retry_result
+                    ),
                 ),
                 align="stretch",
                 spacing="2",
@@ -116,6 +147,7 @@ def race_weekend_card(
     track_time: rx.Var[bool],
     track_time_available: rx.Var[bool],
     on_track_time_change: rx.EventHandler,
+    on_retry_result: rx.EventHandler,
 ) -> rx.Component:
     """Render the selected event details and its schedule.
 
@@ -248,7 +280,9 @@ def race_weekend_card(
                 rx.grid(
                     rx.foreach(
                         schedule_days,
-                        lambda day: _schedule_day_column(day, weekend),
+                        lambda day: _schedule_day_column(
+                            day, weekend, on_retry_result
+                        ),
                     ),
                     columns=rx.breakpoints(initial="1", md=schedule_column_count),
                     spacing="3",
@@ -482,6 +516,7 @@ def season_archive_section(
     loading: rx.Var[bool],
     error: rx.Var[str],
     has_events: rx.Var[bool],
+    on_retry: rx.EventHandler,
 ) -> rx.Component:
     """Render a season's past races as a compact, vertically flowing list."""
 
@@ -496,7 +531,13 @@ def season_archive_section(
             loading_card("Loading past events…"),
             rx.cond(
                 error != "",
-                _archive_message(error),
+                rx.vstack(
+                    _archive_message(error),
+                    rx.button("Retry archive", on_click=on_retry, variant="soft"),
+                    align="start",
+                    spacing="2",
+                    width="100%",
+                ),
                 rx.cond(
                     has_events,
                     rx.vstack(

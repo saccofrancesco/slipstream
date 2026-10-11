@@ -1,12 +1,18 @@
 """Fetch and normalize Formula 1 schedules and championship standings."""
 
 import json
+import logging
+import os
 import re
+import threading
+import time as clock_time
+from contextlib import nullcontext
 from datetime import date, datetime, time, timedelta, timezone
 from functools import lru_cache
 from math import ceil, isfinite
+from pathlib import Path
 from statistics import median
-from typing import Any, TypedDict
+from typing import Any, Callable, Literal, TypeVar, TypedDict
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # FastF1 provides the Ergast client used to retrieve calendars and standings.
@@ -23,8 +29,39 @@ from .flags import (
     flag_for_nationality,
 )
 
-# Avoid reusing cached results when schedule or standings data is requested.
-fastf1.Cache.set_disabled()
+logger = logging.getLogger(__name__)
+_data_lock = threading.RLock()
+_Result = TypeVar("_Result")
+
+# FastF1's cache mode is process-wide. Every service request passes through
+# call_data_source so a fresh request cannot change it during another load.
+_cache_dir = Path(os.environ.get("FASTF1_CACHE", Path.home() / ".cache" / "fastf1"))
+try:
+    _cache_dir.mkdir(parents=True, exist_ok=True)
+    fastf1.Cache.enable_cache(str(_cache_dir))
+except OSError:
+    logger.exception("FastF1 cache could not be initialized at %s", _cache_dir)
+
+
+class UpstreamDataError(RuntimeError):
+    """Required upstream data could not be loaded reliably."""
+
+
+def call_data_source(
+    callback: Callable[..., _Result], *args: object, fresh: bool = False
+) -> _Result:
+    """Serialize FastF1 calls, bypassing cache for live data and retrying once."""
+    with _data_lock:
+        for attempt in range(2):
+            try:
+                with fastf1.Cache.disabled() if fresh else nullcontext():
+                    return callback(*args)
+            except Exception:
+                if attempt:
+                    raise
+                logger.warning("Retrying %s after an upstream failure", callback.__name__, exc_info=True)
+                clock_time.sleep(1)
+    raise AssertionError("The data request did not complete")
 
 # Reuse one Ergast client for schedule and standings requests.
 ergast: Ergast = Ergast()
@@ -40,7 +77,8 @@ class ScheduledSession(TypedDict):
     starts_at: str
     ends_at: str
     track_offset_minutes: int | None
-    results_available: bool
+    result_check_due: bool
+    result_status: Literal["pending", "available", "unpublished", "error"]
 
 
 class TrackSessionDetails(TypedDict):
@@ -90,6 +128,7 @@ class SessionOption(TypedDict):
 
     code: str
     name: str
+    completed: bool
 
 
 class EventDetails(TypedDict):
@@ -99,6 +138,7 @@ class EventDetails(TypedDict):
     round: str
     race_name: str
     race_date: str
+    race_date_iso: str
     circuit_name: str
     locality: str
     country: str
@@ -177,7 +217,7 @@ def get_available_seasons(start_year: int = 1950) -> list[str]:
         result_type="raw", limit=1000
     )
     if not response:
-        return []
+        raise UpstreamDataError("The season list was empty.")
 
     # Deduplicate season values before presenting them newest first.
     seasons: set[str] = {
@@ -201,7 +241,7 @@ def get_completed_races(season: int | str) -> list[dict[str, str]]:
         season=int(season), result_type="raw", limit=1000
     )
     if not response:
-        return []
+        raise UpstreamDataError(f"The {season} race schedule was empty.")
 
     today: date = date.today()
     races: list[dict[str, str]] = []
@@ -243,6 +283,8 @@ def get_past_events(
     response: list[dict[str, Any]] = ergast.get_race_schedule(
         season=int(season), result_type="raw", limit=1000
     )
+    if not response and int(season) <= current_date.year:
+        raise UpstreamDataError(f"The {season} race archive was empty.")
     dated_events: list[tuple[date, PastEvent]] = []
     for race in response:
         race_date = parse_race_date(race.get("date"))
@@ -330,6 +372,7 @@ def get_event_details(
     location: dict[str, Any] = circuit.get("Location") or {}
     country = format_value(location.get("country"))
 
+    now = datetime.now(timezone.utc)
     scheduled: list[tuple[date, bool, str, int, SessionOption]] = []
     session_dates: list[date] = []
     sprint_qualifying_added = False
@@ -357,14 +400,24 @@ def get_event_details(
                 continue
             sprint_qualifying_added = True
 
-        session_time = format_session_time(session_data.get("time"))
+        raw_time = session_data.get("time")
+        session_time = format_session_time(raw_time)
+        session_start = parse_session_start(session_date, raw_time)
+        completed = session_date < now.date() or (
+            session_start is not None
+            and session_start + timedelta(hours=3) <= now
+        )
         scheduled.append(
             (
                 session_date,
                 session_time == "TBD",
                 session_time,
                 order,
-                {"code": code, "name": label},
+                {
+                    "code": code,
+                    "name": label,
+                    "completed": completed,
+                },
             )
         )
         session_dates.append(session_date)
@@ -372,13 +425,20 @@ def get_event_details(
     # Race is a guaranteed selector option, even when the schedule only has a
     # date and omits the optional session start time.
     race_time = format_session_time(race.get("time"))
+    race_start = parse_session_start(race_date, race.get("time"))
     scheduled.append(
         (
             race_date,
             race_time == "TBD",
             race_time,
             len(EVENT_SESSION_FIELDS),
-            {"code": "R", "name": "Race"},
+            {
+                "code": "R",
+                "name": "Race",
+                "completed": race_date < now.date() or (
+                    race_start is not None and race_start + timedelta(hours=3) <= now
+                ),
+            },
         )
     )
     session_dates.append(race_date)
@@ -395,6 +455,7 @@ def get_event_details(
         "round": str(parsed_round),
         "race_name": race_name,
         "race_date": race_date.strftime("%d %b %Y"),
+        "race_date_iso": race_date.isoformat(),
         "circuit_name": format_value(circuit.get("circuitName")),
         "locality": format_value(location.get("locality")),
         "country": country,
@@ -411,6 +472,7 @@ def get_session_classification(
     season: int | str,
     round_number: int | str,
     session_code: str,
+    completed: bool = False,
 ) -> list[DriverClassification]:
     """Load and normalize the selected session's driver classification.
 
@@ -460,6 +522,10 @@ def get_session_classification(
     )
     result_rows: list[dict[str, Any]] = session.results.to_dict(orient="records")
     if not result_rows:
+        if completed:
+            raise UpstreamDataError(
+                f"No classification loaded for completed {parsed_season}/{parsed_round}/{session_code}."
+            )
         return []
 
     # F1's timing feed can leave CountryCode blank. Jolpica has the matching
@@ -474,6 +540,10 @@ def get_session_classification(
     fastest_laps: dict[str, Any] = {}
     if practice_session:
         lap_results = session.laps
+        if completed and lap_results.empty and session.f1_api_support:
+            raise UpstreamDataError(
+                f"No practice laps loaded for completed {parsed_season}/{parsed_round}/{session_code}."
+            )
         if "Deleted" in lap_results.columns:
             deleted_laps = lap_results["Deleted"].map(
                 lambda value: not _is_missing(value) and bool(value)
@@ -604,7 +674,8 @@ def get_session_classification(
 
 
 def has_session_results(
-    season: int | str, round_number: int | str, session_code: str
+    season: int | str, round_number: int | str, session_code: str,
+    completed: bool = False,
 ) -> bool:
     """Report whether FastF1 has published driver result rows for a session.
 
@@ -624,6 +695,10 @@ def has_session_results(
 
     session: Session = fastf1.get_session(parsed_season, parsed_round, session_code)
     session.load(laps=False, telemetry=False, weather=False, messages=False)
+    if session.results.empty and completed:
+        raise UpstreamDataError(
+            f"No results loaded for completed {parsed_season}/{parsed_round}/{session_code}."
+        )
     return not session.results.empty
 
 
@@ -647,7 +722,8 @@ def _quick_lap_threshold(lap_times: list[float]) -> float | None:
 
 
 def get_session_laps(
-    season: int | str, round_number: int | str, session_code: str
+    season: int | str, round_number: int | str, session_code: str,
+    completed: bool = False,
 ) -> SessionLaps:
     """Load timed laps and team metadata for an archive session.
 
@@ -673,6 +749,10 @@ def get_session_laps(
     session: Session = fastf1.get_session(parsed_season, parsed_round, session_code)
     session.load(laps=True, telemetry=False, weather=False, messages=False)
     if session.laps.empty:
+        if completed and session.f1_api_support:
+            raise UpstreamDataError(
+                f"No laps loaded for completed {parsed_season}/{parsed_round}/{session_code}."
+            )
         return {"drivers": [], "laps": []}
     try:
         compound_colors = fastf1.plotting.get_compound_mapping(session)
@@ -1028,6 +1108,8 @@ def get_race_weekend(
         response: list[dict[str, Any]] = ergast.get_race_schedule(
             season=season, result_type="raw", limit=1000
         )
+        if season == current_date.year and not response:
+            raise UpstreamDataError(f"The {season} race schedule was empty.")
         current_events: list[tuple[date, date, dict[str, Any]]] = []
         future_events: list[tuple[date, date, dict[str, Any]]] = []
         for race in response:
@@ -1079,6 +1161,7 @@ def get_race_weekend(
     # Build the display schedule only for the selected weekend. Keep each
     # session's start time with its name so the card can align them.
     sessions_by_date: dict[date, dict[str, ScheduledSession]] = {}
+    now = datetime.now(timezone.utc)
     sprint_qualifying_added = False
     for field, session_code, session_name in session_fields:
         session: object = race.get(field)
@@ -1111,7 +1194,10 @@ def get_race_weekend(
             "starts_at": session_start.isoformat() if session_start else "",
             "ends_at": "",
             "track_offset_minutes": None,
-            "results_available": False,
+            "result_check_due": status == "current" and (
+                session_start is None or session_start <= now
+            ),
+            "result_status": "pending",
         }
 
     # The race's date and time are stored at the top level of the record.
@@ -1126,7 +1212,10 @@ def get_race_weekend(
         "starts_at": race_start.isoformat() if race_start else "",
         "ends_at": "",
         "track_offset_minutes": None,
-        "results_available": False,
+        "result_check_due": status == "current" and (
+            race_start is None or race_start <= now
+        ),
+        "result_status": "pending",
     }
     schedule_days: list[ScheduleDay] = [
         {
