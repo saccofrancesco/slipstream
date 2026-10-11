@@ -94,6 +94,29 @@ class DataLoadingTests(unittest.TestCase):
                 {"drivers": [], "laps": []},
             )
 
+    def test_timing_retry_uses_mirror_and_restores_fastf1_mode(self) -> None:
+        seen: list[tuple[str, bool]] = []
+        session = SimpleNamespace(
+            laps=pd.DataFrame(), f1_api_support=True, load=lambda **_: None
+        )
+
+        def get_session(*_: object) -> SimpleNamespace:
+            seen.append((api.f1_api.base_url, api.f1_logger.LoggingManager.debug))
+            return session
+
+        original_url = api.f1_api.base_url
+        original_debug = api.f1_logger.LoggingManager.debug
+        with patch.object(api.fastf1, "get_session", side_effect=get_session):
+            with patch.object(api.clock_time, "sleep"):
+                with self.assertRaises(api.UpstreamDataError):
+                    api.call_data_source(
+                        api.get_session_laps, 2026, 16, "FP1", True
+                    )
+        self.assertEqual(seen[0], (original_url, original_debug))
+        self.assertEqual(seen[1], (api.f1_api.base_url_mirror, True))
+        self.assertEqual(api.f1_api.base_url, original_url)
+        self.assertEqual(api.f1_logger.LoggingManager.debug, original_debug)
+
     def test_empty_archive_schedule_is_an_error(self) -> None:
         with patch.object(api.ergast, "get_race_schedule", return_value=[]):
             with self.assertRaises(api.UpstreamDataError):

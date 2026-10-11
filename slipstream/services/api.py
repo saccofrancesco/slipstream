@@ -17,6 +17,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # FastF1 provides the Ergast client used to retrieve calendars and standings.
 import fastf1
+import fastf1._api as f1_api
+import fastf1.logger as f1_logger
 import fastf1.plotting
 import pandas as pd
 import requests
@@ -53,7 +55,17 @@ def call_data_source(
     """Serialize FastF1 calls, bypassing cache for live data and retrying once."""
     with _data_lock:
         for attempt in range(2):
+            original_url = f1_api.base_url
+            original_debug = f1_logger.LoggingManager.debug
             try:
+                if attempt and callback in {
+                    get_session_classification, get_session_laps, has_session_results
+                }:
+                    # FastF1 only tries its mirror for HTTP errors. A network
+                    # exception is swallowed as a partial load; the retry uses
+                    # the same timing feed through its published mirror.
+                    f1_api.base_url = f1_api.base_url_mirror
+                    f1_logger.LoggingManager.debug = True
                 with fastf1.Cache.disabled() if fresh else nullcontext():
                     return callback(*args)
             except Exception:
@@ -61,6 +73,9 @@ def call_data_source(
                     raise
                 logger.warning("Retrying %s after an upstream failure", callback.__name__, exc_info=True)
                 clock_time.sleep(1)
+            finally:
+                f1_api.base_url = original_url
+                f1_logger.LoggingManager.debug = original_debug
     raise AssertionError("The data request did not complete")
 
 # Reuse one Ergast client for schedule and standings requests.
