@@ -122,7 +122,6 @@ def session_classification_section(
     error: rx.Var[str],
     classification: rx.Var[list[DriverClassification]],
     has_classification: rx.Var[bool],
-    on_retry: rx.EventHandler,
 ) -> rx.Component:
     """Render the session selector and only its selected classification."""
     return rx.vstack(
@@ -147,7 +146,7 @@ def session_classification_section(
                     ),
                     value=selected_session,
                     on_change=on_session_change,
-                    disabled=sessions.length() == 0,
+                    disabled=loading | (sessions.length() == 0),
                     width="100%",
                     size="3",
                 ),
@@ -166,12 +165,7 @@ def session_classification_section(
             loading_card("Loading the selected classification…"),
             rx.cond(
                 error != "",
-                rx.vstack(
-                    status_card("Session results unavailable", error),
-                    rx.button("Retry session results", on_click=on_retry, variant="soft"),
-                    align="start",
-                    spacing="2",
-                ),
+                status_card("Session results unavailable", error),
                 rx.cond(
                     has_classification,
                     rx.vstack(
