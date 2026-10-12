@@ -192,14 +192,6 @@ class EventState(rx.State):
         return list(range(1, highest_lap + 1))
 
     @rx.var
-    def lap_strip_grid_columns(self) -> str:
-        """Keep the driver label and lap cells aligned across strip rows."""
-        lap_count = len(self.lap_strip_lap_numbers)
-        if not lap_count:
-            return "5rem"
-        return f"5rem repeat({lap_count}, minmax(10rem, 1fr))"
-
-    @rx.var
     def lap_strip_rows(self) -> list[LapStripRow]:
         """Build selected-driver rows without applying the chart outlier filter."""
         laps_by_driver_and_number: dict[tuple[str, int], LapPoint] = {
@@ -474,7 +466,6 @@ def event_results() -> rx.Component:
                                         EventState.driver_lines,
                                         EventState.tyre_point_lines,
                                         EventState.lap_strip_lap_numbers,
-                                        EventState.lap_strip_grid_columns,
                                         EventState.lap_strip_rows,
                                         EventState.selected_driver_count,
                                         EventState.show_outliers,
