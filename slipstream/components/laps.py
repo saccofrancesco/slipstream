@@ -43,10 +43,12 @@ class TyrePointLine(TypedDict):
 class LapStripCell(TypedDict):
     """One driver's display data for a single lap in the lap strip."""
 
+    number: int
     time: str
     tyre_icon: str
     tyre_alt: str
     has_lap: bool
+    selected: bool
 
 
 class LapStripRow(TypedDict):
@@ -97,9 +99,13 @@ def _tyre_point_line(series: rx.Var[TyrePointLine]) -> rx.Component:
     )
 
 
-def _lap_strip_time_cell(cell: rx.Var[LapStripCell]) -> rx.Component:
-    """Render a lap time and its compound icon inside a compact pill."""
-    return rx.hstack(
+def _lap_strip_time_cell(
+    cell: rx.Var[LapStripCell],
+    driver_code: rx.Var[str],
+    on_toggle_lap: rx.EventHandler,
+) -> rx.Component:
+    """Render a selectable lap pill with its tyre or selected check."""
+    return rx.button(
         rx.text(
             cell["time"],
             font_weight="bold",
@@ -108,33 +114,45 @@ def _lap_strip_time_cell(cell: rx.Var[LapStripCell]) -> rx.Component:
             white_space="nowrap",
         ),
         rx.cond(
-            cell["has_lap"],
-            rx.cond(
-                cell["tyre_icon"] != "",
-                rx.image(
-                    src=cell["tyre_icon"],
-                    alt=cell["tyre_alt"],
-                    width="1.25rem",
-                    height="1.25rem",
-                    object_fit="contain",
-                    flex_shrink="0",
-                ),
-                rx.box(
-                    role="img",
-                    aria_label=cell["tyre_alt"],
-                    title=cell["tyre_alt"],
-                    width="1.25rem",
-                    height="1.25rem",
-                    border="1px solid var(--gray-9)",
-                    border_radius="full",
-                    flex_shrink="0",
-                ),
+            cell["selected"],
+            rx.icon(
+                "check",
+                size=20,
+                color=rx.color("green", 10),
             ),
-            rx.box(width="1.25rem", height="1.25rem", flex_shrink="0"),
+            rx.cond(
+                cell["has_lap"],
+                rx.cond(
+                    cell["tyre_icon"] != "",
+                    rx.image(
+                        src=cell["tyre_icon"],
+                        alt=cell["tyre_alt"],
+                        width="1.25rem",
+                        height="1.25rem",
+                        object_fit="contain",
+                        flex_shrink="0",
+                    ),
+                    rx.box(
+                        role="img",
+                        aria_label=cell["tyre_alt"],
+                        title=cell["tyre_alt"],
+                        width="1.25rem",
+                        height="1.25rem",
+                        border="1px solid var(--gray-9)",
+                        border_radius="full",
+                        flex_shrink="0",
+                    ),
+                ),
+                rx.box(width="1.25rem", height="1.25rem", flex_shrink="0"),
+            ),
         ),
-        align="center",
-        justify="center",
-        spacing="1",
+        on_click=lambda: on_toggle_lap(driver_code, cell["number"]),
+        disabled=~cell["has_lap"],
+        aria_pressed=cell["selected"],
+        display="flex",
+        align_items="center",
+        justify_content="center",
+        gap="0.25rem",
         width="7.25rem",
         min_width="7.25rem",
         height="2.25rem",
@@ -145,10 +163,14 @@ def _lap_strip_time_cell(cell: rx.Var[LapStripCell]) -> rx.Component:
         border_color=rx.color("gray", 5),
         border_radius="0.625rem",
         box_sizing="border-box",
+        color=rx.color("gray", 12),
+        cursor=rx.cond(cell["has_lap"], "pointer", "default"),
     )
 
 
-def _lap_strip_row(row: rx.Var[LapStripRow]) -> rx.Component:
+def _lap_strip_row(
+    row: rx.Var[LapStripRow], on_toggle_lap: rx.EventHandler
+) -> rx.Component:
     """Render one selected driver across the shared lap columns."""
     return rx.el.tr(
         rx.el.th(
@@ -172,7 +194,7 @@ def _lap_strip_row(row: rx.Var[LapStripRow]) -> rx.Component:
         rx.foreach(
             row["cells"],
             lambda cell: rx.el.td(
-                _lap_strip_time_cell(cell),
+                _lap_strip_time_cell(cell, row["code"], on_toggle_lap),
                 width=LAP_STRIP_LAP_WIDTH,
                 min_width=LAP_STRIP_LAP_WIDTH,
                 max_width=LAP_STRIP_LAP_WIDTH,
@@ -190,6 +212,7 @@ def _lap_strip(
     lap_numbers: rx.Var[list[int]],
     rows: rx.Var[list[LapStripRow]],
     selected_count: rx.Var[int],
+    on_toggle_lap: rx.EventHandler,
 ) -> rx.Component:
     """Render the horizontally scrollable lap times for selected drivers."""
     return rx.cond(
@@ -254,7 +277,12 @@ def _lap_strip(
                                 height="2.75rem",
                             ),
                         ),
-                        rx.el.tbody(rx.foreach(rows, _lap_strip_row)),
+                        rx.el.tbody(
+                            rx.foreach(
+                                rows,
+                                lambda row: _lap_strip_row(row, on_toggle_lap),
+                            )
+                        ),
                         width="max-content",
                         min_width="100%",
                         border_collapse="separate",
@@ -402,6 +430,7 @@ def laps_section(
     strip_lap_numbers: rx.Var[list[int]],
     strip_rows: rx.Var[list[LapStripRow]],
     selected_count: rx.Var[int],
+    on_toggle_lap: rx.EventHandler,
     show_outliers: rx.Var[bool],
     on_outliers_change: rx.EventHandler,
     loading: rx.Var[bool],
@@ -584,6 +613,7 @@ def laps_section(
                             strip_lap_numbers,
                             strip_rows,
                             selected_count,
+                            on_toggle_lap,
                         ),
                         align="stretch",
                         spacing="4",
