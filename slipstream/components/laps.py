@@ -8,6 +8,8 @@ from reflex.vars.function import FunctionStringVar
 from .layout import loading_card, status_card
 
 CHART_ANIMATION_DURATION_MS: int = 1500
+LAP_STRIP_DRIVER_WIDTH: str = "4.5rem"
+LAP_STRIP_LAP_WIDTH: str = "8rem"
 
 
 class DriverChip(TypedDict):
@@ -101,7 +103,7 @@ def _lap_strip_time_cell(cell: rx.Var[LapStripCell]) -> rx.Component:
         rx.text(
             cell["time"],
             font_weight="bold",
-            size="3",
+            size="2",
             font_variant_numeric="tabular-nums",
             white_space="nowrap",
         ),
@@ -112,8 +114,8 @@ def _lap_strip_time_cell(cell: rx.Var[LapStripCell]) -> rx.Component:
                 rx.image(
                     src=cell["tyre_icon"],
                     alt=cell["tyre_alt"],
-                    width="1.5rem",
-                    height="1.5rem",
+                    width="1.25rem",
+                    height="1.25rem",
                     object_fit="contain",
                     flex_shrink="0",
                 ),
@@ -121,60 +123,66 @@ def _lap_strip_time_cell(cell: rx.Var[LapStripCell]) -> rx.Component:
                     role="img",
                     aria_label=cell["tyre_alt"],
                     title=cell["tyre_alt"],
-                    width="1.5rem",
-                    height="1.5rem",
+                    width="1.25rem",
+                    height="1.25rem",
                     border="1px solid var(--gray-9)",
                     border_radius="full",
                     flex_shrink="0",
                 ),
             ),
-            rx.box(width="1.5rem", height="1.5rem", flex_shrink="0"),
+            rx.box(width="1.25rem", height="1.25rem", flex_shrink="0"),
         ),
         align="center",
         justify="center",
-        spacing="2",
-        width="8.5rem",
-        min_width="8.5rem",
-        height="3rem",
-        padding_x="0.5rem",
+        spacing="1",
+        width="7.25rem",
+        min_width="7.25rem",
+        height="2.25rem",
+        padding_x="0.375rem",
         background_color=rx.color("gray", 3),
         border_width="1px",
         border_style="solid",
         border_color=rx.color("gray", 5),
-        border_radius="0.75rem",
+        border_radius="0.625rem",
         box_sizing="border-box",
     )
 
 
 def _lap_strip_row(row: rx.Var[LapStripRow]) -> rx.Component:
     """Render one selected driver across the shared lap columns."""
-    return rx.table.row(
-        rx.table.row_header_cell(
-            rx.text(row["code"], size="3", weight="medium"),
+    return rx.el.tr(
+        rx.el.th(
+            rx.text(row["code"], size="2", weight="medium"),
             scope="row",
             position="sticky",
             left="0",
             z_index="1",
             background_color=rx.color("gray", 2),
-            width="5rem",
-            min_width="5rem",
-            max_width="5rem",
+            width=LAP_STRIP_DRIVER_WIDTH,
+            min_width=LAP_STRIP_DRIVER_WIDTH,
+            max_width=LAP_STRIP_DRIVER_WIDTH,
+            box_sizing="border-box",
             padding_x="0.75rem",
+            padding_y="0.25rem",
             white_space="nowrap",
+            text_align="left",
+            vertical_align="middle",
             border_top="1px solid var(--gray-5)",
         ),
         rx.foreach(
             row["cells"],
-            lambda cell: rx.table.cell(
+            lambda cell: rx.el.td(
                 _lap_strip_time_cell(cell),
-                width="10rem",
-                min_width="10rem",
-                max_width="10rem",
-                padding="0.5rem 0.75rem",
+                width=LAP_STRIP_LAP_WIDTH,
+                min_width=LAP_STRIP_LAP_WIDTH,
+                max_width=LAP_STRIP_LAP_WIDTH,
+                box_sizing="border-box",
+                padding="0.25rem 0.375rem",
+                vertical_align="middle",
                 border_top="1px solid var(--gray-5)",
             ),
         ),
-        height="4rem",
+        height="3rem",
     )
 
 
@@ -202,50 +210,59 @@ def _lap_strip(
         ),
         rx.box(
             rx.scroll_area(
-                rx.table.root(
-                    rx.table.header(
-                        rx.table.row(
-                            rx.table.column_header_cell(
-                                rx.text("Lap:", size="3", weight="bold"),
-                                scope="col",
-                                position="sticky",
-                                top="0",
-                                left="0",
-                                z_index="3",
-                                background_color=rx.color("gray", 2),
-                                width="5rem",
-                                min_width="5rem",
-                                max_width="5rem",
-                                padding_x="0.75rem",
-                                white_space="nowrap",
-                            ),
-                            rx.foreach(
-                                lap_numbers,
-                                lambda lap_number: rx.table.column_header_cell(
-                                    rx.text(lap_number, size="3", weight="bold"),
+                # The wrapper keeps ScrollArea's direct-child styles off the table.
+                rx.box(
+                    rx.el.table(
+                        rx.el.thead(
+                            rx.el.tr(
+                                rx.el.th(
+                                    rx.text("Lap:", size="2", weight="bold"),
                                     scope="col",
                                     position="sticky",
                                     top="0",
-                                    z_index="2",
+                                    left="0",
+                                    z_index="3",
                                     background_color=rx.color("gray", 2),
-                                    width="10rem",
-                                    min_width="10rem",
-                                    max_width="10rem",
-                                    padding="0.75rem",
-                                    text_align="center",
+                                    width=LAP_STRIP_DRIVER_WIDTH,
+                                    min_width=LAP_STRIP_DRIVER_WIDTH,
+                                    max_width=LAP_STRIP_DRIVER_WIDTH,
+                                    box_sizing="border-box",
+                                    padding_x="0.75rem",
+                                    padding_y="0.5rem",
+                                    white_space="nowrap",
+                                    text_align="left",
+                                    vertical_align="middle",
                                 ),
+                                rx.foreach(
+                                    lap_numbers,
+                                    lambda lap_number: rx.el.th(
+                                        rx.text(lap_number, size="2", weight="bold"),
+                                        scope="col",
+                                        position="sticky",
+                                        top="0",
+                                        z_index="2",
+                                        background_color=rx.color("gray", 2),
+                                        width=LAP_STRIP_LAP_WIDTH,
+                                        min_width=LAP_STRIP_LAP_WIDTH,
+                                        max_width=LAP_STRIP_LAP_WIDTH,
+                                        box_sizing="border-box",
+                                        padding="0.5rem 0.375rem",
+                                        text_align="center",
+                                        vertical_align="middle",
+                                    ),
+                                ),
+                                height="2.75rem",
                             ),
-                            height="4rem",
                         ),
+                        rx.el.tbody(rx.foreach(rows, _lap_strip_row)),
+                        width="max-content",
+                        min_width="100%",
+                        border_collapse="separate",
+                        border_spacing="0",
+                        background_color=rx.color("gray", 2),
                     ),
-                    rx.table.body(rx.foreach(rows, _lap_strip_row)),
-                    variant="ghost",
-                    size="1",
                     width="max-content",
                     min_width="100%",
-                    border_collapse="separate",
-                    border_spacing="0",
-                    background_color=rx.color("gray", 2),
                 ),
                 scrollbars="horizontal",
                 type="auto",
