@@ -10,6 +10,8 @@ from slipstream.components.classification import session_classification_section
 from slipstream.components.laps import (
     DriverChip,
     DriverLine,
+    LapStripCell,
+    LapStripRow,
     TyrePointLine,
     laps_section,
 )
@@ -25,6 +27,14 @@ from slipstream.services import (
     get_session_classification,
     get_session_laps,
 )
+
+TYRE_ICON_PATHS: dict[str, str] = {
+    "SOFT": "/tyres/soft.svg",
+    "MEDIUM": "/tyres/medium.svg",
+    "HARD": "/tyres/hard.svg",
+    "INTERMEDIATE": "/tyres/intermediate.svg",
+    "WET": "/tyres/wet.svg",
+}
 
 
 class EventState(rx.State):
@@ -171,6 +181,62 @@ class EventState(rx.State):
             row[f"marker_{lap['driver']}_{lap['compound']}"] = lap["seconds"]
 
         return [chart_rows[number] for number in sorted(chart_rows)]
+
+    @rx.var
+    def lap_strip_lap_numbers(self) -> list[int]:
+        """Return every lap number present in the loaded session."""
+        highest_lap = max(
+            (lap["number"] for lap in self.lap_points),
+            default=0,
+        )
+        return list(range(1, highest_lap + 1))
+
+    @rx.var
+    def lap_strip_grid_columns(self) -> str:
+        """Keep the driver label and lap cells aligned across strip rows."""
+        lap_count = len(self.lap_strip_lap_numbers)
+        if not lap_count:
+            return "5rem"
+        return f"5rem repeat({lap_count}, minmax(10rem, 1fr))"
+
+    @rx.var
+    def lap_strip_rows(self) -> list[LapStripRow]:
+        """Build selected-driver rows without applying the chart outlier filter."""
+        laps_by_driver_and_number: dict[tuple[str, int], LapPoint] = {
+            (lap["driver"], lap["number"]): lap for lap in self.lap_points
+        }
+        rows: list[LapStripRow] = []
+        for code in self.selected_drivers:
+            cells: list[LapStripCell] = []
+            for lap_number in self.lap_strip_lap_numbers:
+                lap = laps_by_driver_and_number.get((code, lap_number))
+                if lap is None:
+                    cells.append(
+                        {
+                            "time": "N/A",
+                            "tyre_icon": "",
+                            "tyre_alt": "No timed lap",
+                            "has_lap": False,
+                        }
+                    )
+                    continue
+
+                compound = lap["compound"].upper()
+                tyre_icon = TYRE_ICON_PATHS.get(compound, "")
+                cells.append(
+                    {
+                        "time": lap["time"],
+                        "tyre_icon": tyre_icon,
+                        "tyre_alt": (
+                            f"{compound.lower()} tyre"
+                            if tyre_icon
+                            else "Unknown tyre compound"
+                        ),
+                        "has_lap": True,
+                    }
+                )
+            rows.append({"code": code, "cells": cells})
+        return rows
 
     @rx.var
     def selected_driver_count(self) -> int:
@@ -407,6 +473,9 @@ def event_results() -> rx.Component:
                                         EventState.lap_chart_data,
                                         EventState.driver_lines,
                                         EventState.tyre_point_lines,
+                                        EventState.lap_strip_lap_numbers,
+                                        EventState.lap_strip_grid_columns,
+                                        EventState.lap_strip_rows,
                                         EventState.selected_driver_count,
                                         EventState.show_outliers,
                                         EventState.set_show_outliers,
