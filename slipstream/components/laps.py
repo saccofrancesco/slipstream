@@ -38,6 +38,22 @@ class TyrePointLine(TypedDict):
     line_color: str
 
 
+class LapStripCell(TypedDict):
+    """One driver's display data for a single lap in the lap strip."""
+
+    time: str
+    tyre_icon: str
+    tyre_alt: str
+    has_lap: bool
+
+
+class LapStripRow(TypedDict):
+    """A selected driver and that driver's aligned lap strip cells."""
+
+    code: str
+    cells: list[LapStripCell]
+
+
 def _driver_line(series: rx.Var[DriverLine]) -> rx.Component:
     """Render one animated, monotone driver lap-time line."""
     return rx.recharts.line(
@@ -76,6 +92,160 @@ def _tyre_point_line(series: rx.Var[TyrePointLine]) -> rx.Component:
         animation_duration=CHART_ANIMATION_DURATION_MS,
         animation_easing="ease-in-out",
         custom_attrs={"tooltipType": "none"},
+    )
+
+
+def _lap_strip_time_cell(cell: rx.Var[LapStripCell]) -> rx.Component:
+    """Render a lap time and its compound icon inside a compact pill."""
+    return rx.hstack(
+        rx.text(
+            cell["time"],
+            font_weight="bold",
+            font_size="1rem",
+            font_variant_numeric="tabular-nums",
+            white_space="nowrap",
+        ),
+        rx.cond(
+            cell["has_lap"],
+            rx.cond(
+                cell["tyre_icon"] != "",
+                rx.image(
+                    src=cell["tyre_icon"],
+                    alt=cell["tyre_alt"],
+                    width="1.5rem",
+                    height="1.5rem",
+                    object_fit="contain",
+                    flex_shrink="0",
+                ),
+                rx.box(
+                    role="img",
+                    aria_label=cell["tyre_alt"],
+                    title=cell["tyre_alt"],
+                    width="1.5rem",
+                    height="1.5rem",
+                    border="1px solid var(--gray-9)",
+                    border_radius="full",
+                    flex_shrink="0",
+                ),
+            ),
+            rx.box(width="1.5rem", height="1.5rem", flex_shrink="0"),
+        ),
+        align="center",
+        justify="center",
+        spacing="2",
+        width="8.5rem",
+        min_width="8.5rem",
+        height="3rem",
+        padding_x="0.5rem",
+        background_color=rx.color("gray", 3),
+        border="1px solid var(--gray-6)",
+        border_radius="0.75rem",
+        box_sizing="border-box",
+    )
+
+
+def _lap_strip_row(
+    row: rx.Var[LapStripRow], grid_columns: rx.Var[str]
+) -> rx.Component:
+    """Render one selected driver across the shared lap columns."""
+    return rx.grid(
+        rx.box(
+            rx.text(
+                row["code"],
+                font_size="1.125rem",
+                font_weight="medium",
+                white_space="nowrap",
+            ),
+            display="flex",
+            align_items="center",
+            padding_x="0.75rem",
+            position="sticky",
+            left="0",
+            z_index="1",
+            background_color=rx.color("gray", 2),
+        ),
+        rx.foreach(row["cells"], _lap_strip_time_cell),
+        grid_template_columns=grid_columns,
+        align_items="center",
+        width="100%",
+        min_width="max-content",
+        min_height="4rem",
+        border_top="1px solid var(--gray-6)",
+    )
+
+
+def _lap_strip(
+    lap_numbers: rx.Var[list[int]],
+    grid_columns: rx.Var[str],
+    rows: rx.Var[list[LapStripRow]],
+    selected_count: rx.Var[int],
+) -> rx.Component:
+    """Render the horizontally scrollable lap times for selected drivers."""
+    return rx.cond(
+        selected_count == 0,
+        rx.box(
+            rx.text(
+                "Select a driver above to compare lap times.",
+                size="2",
+                color=rx.color("gray", 10),
+                text_align="center",
+            ),
+            width="100%",
+            padding_y="4",
+            border="1px solid var(--gray-6)",
+            border_radius="0.75rem",
+            background_color=rx.color("gray", 2),
+        ),
+        rx.box(
+            rx.scroll_area(
+                rx.vstack(
+                    rx.grid(
+                        rx.box(
+                            rx.text("Lap:", font_size="1.125rem", font_weight="bold"),
+                            display="flex",
+                            align_items="center",
+                            padding_x="0.75rem",
+                            position="sticky",
+                            left="0",
+                            z_index="2",
+                            background_color=rx.color("gray", 2),
+                        ),
+                        rx.foreach(
+                            lap_numbers,
+                            lambda lap_number: rx.box(
+                                rx.text(
+                                    lap_number,
+                                    font_size="1.125rem",
+                                    font_weight="bold",
+                                    text_align="center",
+                                ),
+                                display="flex",
+                                align_items="center",
+                                justify_content="center",
+                            ),
+                        ),
+                        grid_template_columns=grid_columns,
+                        align_items="center",
+                        width="100%",
+                        min_width="max-content",
+                        min_height="4rem",
+                    ),
+                    rx.foreach(rows, lambda row: _lap_strip_row(row, grid_columns)),
+                    align="stretch",
+                    spacing="0",
+                    width="100%",
+                    min_width="max-content",
+                ),
+                scrollbars="horizontal",
+                type="auto",
+                style={"width": "100%"},
+            ),
+            width="100%",
+            border="1px solid var(--gray-6)",
+            border_radius="0.75rem",
+            background_color=rx.color("gray", 2),
+            overflow="hidden",
+        ),
     )
 
 
@@ -199,6 +369,9 @@ def laps_section(
     chart_data: rx.Var[list[dict[str, float | int | None]]],
     driver_lines: rx.Var[list[DriverLine]],
     tyre_point_lines: rx.Var[list[TyrePointLine]],
+    strip_lap_numbers: rx.Var[list[int]],
+    strip_grid_columns: rx.Var[str],
+    strip_rows: rx.Var[list[LapStripRow]],
     selected_count: rx.Var[int],
     show_outliers: rx.Var[bool],
     on_outliers_change: rx.EventHandler,
@@ -245,137 +418,148 @@ def laps_section(
                 status_card("Lap times unavailable", error),
                 rx.cond(
                     loaded,
-                    rx.flex(
-                        rx.vstack(
-                            rx.text(
-                                "DRIVERS",
-                                size="1",
-                                weight="bold",
-                                color=rx.color("gray", 10),
-                                letter_spacing="0.1em",
-                            ),
-                            rx.grid(
-                                rx.foreach(
-                                    chips,
-                                    lambda chip: _driver_chip(chip, on_toggle_driver),
-                                ),
-                                grid_template_columns="repeat(2, 3.75rem)",
-                                gap="0.5rem",
-                                width="fit-content",
-                            ),
-                            align="stretch",
-                            spacing="2",
-                            width="fit-content",
-                            flex_shrink="0",
-                        ),
-                        rx.box(
-                            rx.recharts.line_chart(
-                                rx.recharts.cartesian_grid(
-                                    stroke=rx.color("gray", 5),
-                                    stroke_dasharray="3 5",
-                                    vertical=True,
-                                ),
-                                rx.recharts.x_axis(
-                                    data_key="lap_number",
-                                    type_="number",
-                                    domain=["dataMin", "dataMax"],
-                                    allow_decimals=False,
-                                    tick_count=9,
-                                    axis_line=False,
-                                    tick_line=False,
-                                    stroke=rx.color("gray", 10),
-                                    height=56,
-                                    label={
-                                        "value": "LAP NUMBER",
-                                        "position": "insideBottom",
-                                        "offset": 4,
-                                        "fill": rx.color("gray", 10),
-                                    },
-                                ),
-                                rx.recharts.y_axis(
-                                    type_="number",
-                                    domain=["auto", "auto"],
-                                    tick_count=5,
-                                    tick_formatter=time_formatter,
-                                    axis_line=False,
-                                    tick_line=False,
-                                    width=64,
-                                    stroke=rx.color("gray", 10),
-                                    label={
-                                        "value": "LAP TIME",
-                                        "angle": -90,
-                                        "position": "insideLeft",
-                                        "fill": rx.color("gray", 10),
-                                    },
-                                ),
-                                rx.recharts.graphing_tooltip(
-                                    cursor={
-                                        "stroke": "rgba(255,255,255,0.55)",
-                                        "strokeWidth": 1,
-                                        "strokeDasharray": "4 4",
-                                    },
-                                    separator="  ",
-                                    filter_null=True,
-                                    wrapper_style={"outline": "none"},
-                                    content_style={
-                                        "backgroundColor": "var(--gray-2)",
-                                        "border": "1px solid var(--gray-6)",
-                                        "borderRadius": "10px",
-                                        "boxShadow": "0 8px 24px rgba(0,0,0,0.28)",
-                                        "padding": "10px 12px",
-                                    },
-                                    item_style={
-                                        "color": "var(--gray-12)",
-                                        "fontVariantNumeric": "tabular-nums",
-                                    },
-                                    label_style={
-                                        "color": "var(--gray-11)",
-                                        "fontWeight": 700,
-                                        "marginBottom": "6px",
-                                    },
-                                    is_animation_active=False,
-                                    custom_attrs={
-                                        "formatter": tooltip_formatter,
-                                        "labelFormatter": tooltip_lap_formatter,
-                                    },
-                                ),
-                                rx.recharts.legend(
-                                    layout="horizontal",
-                                    align="center",
-                                    vertical_align="top",
-                                    height=30,
-                                    wrapper_style={"fontSize": "12px"},
-                                ),
-                                rx.foreach(driver_lines, _driver_line),
-                                rx.foreach(tyre_point_lines, _tyre_point_line),
-                                data=chart_data,
-                                width="100%",
-                                height=440,
-                                margin={"top": 8, "right": 20, "left": 6, "bottom": 20},
-                            ),
-                            rx.cond(
-                                selected_count == 0,
+                    rx.vstack(
+                        rx.flex(
+                            rx.vstack(
                                 rx.text(
-                                    "Select a driver to plot lap times",
-                                    size="2",
+                                    "DRIVERS",
+                                    size="1",
+                                    weight="bold",
                                     color=rx.color("gray", 10),
-                                    text_align="center",
-                                    position="absolute",
-                                    top="50%",
-                                    left="50%",
-                                    transform="translate(-50%, -50%)",
-                                    pointer_events="none",
+                                    letter_spacing="0.1em",
                                 ),
+                                rx.grid(
+                                    rx.foreach(
+                                        chips,
+                                        lambda chip: _driver_chip(chip, on_toggle_driver),
+                                    ),
+                                    grid_template_columns="repeat(2, 3.75rem)",
+                                    gap="0.5rem",
+                                    width="fit-content",
+                                ),
+                                align="stretch",
+                                spacing="2",
+                                width="fit-content",
+                                flex_shrink="0",
                             ),
-                            position="relative",
+                            rx.box(
+                                rx.recharts.line_chart(
+                                    rx.recharts.cartesian_grid(
+                                        stroke=rx.color("gray", 5),
+                                        stroke_dasharray="3 5",
+                                        vertical=True,
+                                    ),
+                                    rx.recharts.x_axis(
+                                        data_key="lap_number",
+                                        type_="number",
+                                        domain=["dataMin", "dataMax"],
+                                        allow_decimals=False,
+                                        tick_count=9,
+                                        axis_line=False,
+                                        tick_line=False,
+                                        stroke=rx.color("gray", 10),
+                                        height=56,
+                                        label={
+                                            "value": "LAP NUMBER",
+                                            "position": "insideBottom",
+                                            "offset": 4,
+                                            "fill": rx.color("gray", 10),
+                                        },
+                                    ),
+                                    rx.recharts.y_axis(
+                                        type_="number",
+                                        domain=["auto", "auto"],
+                                        tick_count=5,
+                                        tick_formatter=time_formatter,
+                                        axis_line=False,
+                                        tick_line=False,
+                                        width=64,
+                                        stroke=rx.color("gray", 10),
+                                        label={
+                                            "value": "LAP TIME",
+                                            "angle": -90,
+                                            "position": "insideLeft",
+                                            "fill": rx.color("gray", 10),
+                                        },
+                                    ),
+                                    rx.recharts.graphing_tooltip(
+                                        cursor={
+                                            "stroke": "rgba(255,255,255,0.55)",
+                                            "strokeWidth": 1,
+                                            "strokeDasharray": "4 4",
+                                        },
+                                        separator="  ",
+                                        filter_null=True,
+                                        wrapper_style={"outline": "none"},
+                                        content_style={
+                                            "backgroundColor": "var(--gray-2)",
+                                            "border": "1px solid var(--gray-6)",
+                                            "borderRadius": "10px",
+                                            "boxShadow": "0 8px 24px rgba(0,0,0,0.28)",
+                                            "padding": "10px 12px",
+                                        },
+                                        item_style={
+                                            "color": "var(--gray-12)",
+                                            "fontVariantNumeric": "tabular-nums",
+                                        },
+                                        label_style={
+                                            "color": "var(--gray-11)",
+                                            "fontWeight": 700,
+                                            "marginBottom": "6px",
+                                        },
+                                        is_animation_active=False,
+                                        custom_attrs={
+                                            "formatter": tooltip_formatter,
+                                            "labelFormatter": tooltip_lap_formatter,
+                                        },
+                                    ),
+                                    rx.recharts.legend(
+                                        layout="horizontal",
+                                        align="center",
+                                        vertical_align="top",
+                                        height=30,
+                                        wrapper_style={"fontSize": "12px"},
+                                    ),
+                                    rx.foreach(driver_lines, _driver_line),
+                                    rx.foreach(tyre_point_lines, _tyre_point_line),
+                                    data=chart_data,
+                                    width="100%",
+                                    height=440,
+                                    margin={"top": 8, "right": 20, "left": 6, "bottom": 20},
+                                ),
+                                rx.cond(
+                                    selected_count == 0,
+                                    rx.text(
+                                        "Select a driver to plot lap times",
+                                        size="2",
+                                        color=rx.color("gray", 10),
+                                        text_align="center",
+                                        position="absolute",
+                                        top="50%",
+                                        left="50%",
+                                        transform="translate(-50%, -50%)",
+                                        pointer_events="none",
+                                    ),
+                                ),
+                                position="relative",
+                                width="100%",
+                                min_width="0",
+                                flex="1",
+                            ),
+                            direction=rx.breakpoints(initial="column", md="row"),
+                            gap="1.5rem",
                             width="100%",
-                            min_width="0",
-                            flex="1",
+                            align="start",
                         ),
-                        direction=rx.breakpoints(initial="column", md="row"),
-                        gap="1.5rem",
+                        _lap_strip(
+                            strip_lap_numbers,
+                            strip_grid_columns,
+                            strip_rows,
+                            selected_count,
+                        ),
+                        align="stretch",
+                        spacing="4",
                         width="100%",
-                        align="start",
                     ),
                     status_card(
                         "No lap times available",
