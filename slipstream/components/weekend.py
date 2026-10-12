@@ -135,46 +135,31 @@ def race_weekend_card(
         rx.vstack(
             # Bind the header to the reactive fields updated by ResultsState.
             rx.hstack(
-                rx.vstack(
-                    rx.text(
-                        rx.cond(
-                            weekend["status"] == "current",
-                            "CURRENT WEEKEND",
-                            "UPCOMING WEEKEND",
-                        ),
-                        size="2",
-                        weight="bold",
-                        color=rx.color("accent", 11),
-                        letter_spacing="0.14em",
-                    ),
-                    rx.hstack(
-                        rx.cond(
-                            weekend["country_flag"] != "",
-                            rx.box(
-                                flag_icon(
-                                    weekend["country_flag"], weekend["country"]
-                                ),
-                                font_size="2rem",
-                                line_height="1",
-                                flex_shrink="0",
+                rx.hstack(
+                    rx.cond(
+                        weekend["country_flag"] != "",
+                        rx.box(
+                            flag_icon(
+                                weekend["country_flag"], weekend["country"]
                             ),
-                            rx.fragment(),
+                            font_size="2rem",
+                            line_height="1",
+                            flex_shrink="0",
                         ),
-                        rx.heading(
-                            weekend["race_name"],
-                            as_="h2",
-                            size="7",
-                            weight="bold",
-                            letter_spacing="-0.03em",
-                            min_width="0",
-                            flex="1",
-                        ),
-                        align="center",
-                        spacing="2",
-                        width="100%",
+                        rx.fragment(),
                     ),
-                    align="start",
-                    spacing="1",
+                    rx.heading(
+                        weekend["race_name"],
+                        as_="h2",
+                        size="7",
+                        weight="bold",
+                        letter_spacing="-0.03em",
+                        min_width="0",
+                        flex="1",
+                    ),
+                    align="center",
+                    spacing="2",
+                    width="100%",
                 ),
                 rx.badge(
                     f"ROUND {weekend['round']}",
@@ -190,19 +175,38 @@ def race_weekend_card(
             ),
             rx.separator(),
             rx.hstack(
-                rx.icon("map-pin", size=20, color=rx.color("accent", 11)),
-                rx.vstack(
-                    rx.text(weekend["circuit_name"], weight="bold"),
-                    rx.hstack(
-                        rx.text(
-                            f"{weekend['locality']}, {weekend['country']}",
-                            color=rx.color("gray", 11),
-                        ),
-                        align="center",
-                        spacing="2",
+                rx.icon(
+                    "map-pin",
+                    size=20,
+                    color=rx.color("accent", 11),
+                    flex_shrink="0",
+                ),
+                rx.hstack(
+                    rx.text(
+                        f"{weekend['circuit_name']} -",
+                        weight="bold",
+                        overflow="hidden",
+                        text_overflow="ellipsis",
+                        white_space="nowrap",
+                        min_width="0",
+                        flex_shrink="1",
+                        title=weekend["circuit_name"],
                     ),
-                    align="start",
+                    rx.text(
+                        f"{weekend['locality']}, {weekend['country']}",
+                        color=rx.color("gray", 11),
+                        overflow="hidden",
+                        text_overflow="ellipsis",
+                        white_space="nowrap",
+                        min_width="0",
+                        flex_shrink="1",
+                        title=f"{weekend['locality']}, {weekend['country']}",
+                    ),
+                    align="center",
                     spacing="1",
+                    min_width="0",
+                    flex="1",
+                    overflow="hidden",
                 ),
                 align="center",
                 spacing="3",
