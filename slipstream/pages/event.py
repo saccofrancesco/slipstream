@@ -2,8 +2,10 @@
 
 import asyncio
 from collections.abc import AsyncGenerator
+from typing import TypedDict
 
 import reflex as rx
+from reflex.event import EventSpec
 
 from slipstream.components import container, loading_card, navbar, status_card
 from slipstream.components.classification import session_classification_section
@@ -37,6 +39,13 @@ TYRE_ICON_PATHS: dict[str, str] = {
 }
 
 
+class SelectedLap(TypedDict):
+    """A uniquely identified timed lap in the current session's pool."""
+
+    driver: str
+    number: int
+
+
 class EventState(rx.State):
     """Hold event details, classification, and lap data for one session."""
 
@@ -52,6 +61,7 @@ class EventState(rx.State):
     lap_drivers: list[LapDriver] = []
     lap_points: list[LapPoint] = []
     selected_drivers: list[str] = []
+    selected_laps: list[SelectedLap] = []
     show_outliers: bool = False
     laps_loading: bool = False
     laps_loaded: bool = False
@@ -197,6 +207,9 @@ class EventState(rx.State):
         laps_by_driver_and_number: dict[tuple[str, int], LapPoint] = {
             (lap["driver"], lap["number"]): lap for lap in self.lap_points
         }
+        selected_lap_keys: set[tuple[str, int]] = {
+            (lap["driver"], lap["number"]) for lap in self.selected_laps
+        }
         rows: list[LapStripRow] = []
         for code in self.selected_drivers:
             cells: list[LapStripCell] = []
@@ -205,10 +218,12 @@ class EventState(rx.State):
                 if lap is None:
                     cells.append(
                         {
+                            "number": lap_number,
                             "time": "N/A",
                             "tyre_icon": "",
                             "tyre_alt": "No timed lap",
                             "has_lap": False,
+                            "selected": False,
                         }
                     )
                     continue
@@ -217,6 +232,7 @@ class EventState(rx.State):
                 tyre_icon = TYRE_ICON_PATHS.get(compound, "")
                 cells.append(
                     {
+                        "number": lap_number,
                         "time": lap["time"],
                         "tyre_icon": tyre_icon,
                         "tyre_alt": (
@@ -225,6 +241,7 @@ class EventState(rx.State):
                             else "Unknown tyre compound"
                         ),
                         "has_lap": True,
+                        "selected": (code, lap_number) in selected_lap_keys,
                     }
                 )
             rows.append({"code": code, "cells": cells})
@@ -234,6 +251,11 @@ class EventState(rx.State):
     def selected_driver_count(self) -> int:
         """Return how many drivers are currently plotted."""
         return len(self.selected_drivers)
+
+    @rx.var
+    def selected_lap_count(self) -> int:
+        """Return the number of unique laps in the telemetry pool."""
+        return len(self.selected_laps)
 
     @rx.event
     async def change_tab(self, tab: str) -> AsyncGenerator[None, None]:
@@ -252,6 +274,35 @@ class EventState(rx.State):
             self.selected_drivers = [item for item in self.selected_drivers if item != code]
         else:
             self.selected_drivers = [*self.selected_drivers, code]
+
+    @rx.event
+    def toggle_lap(self, code: str, number: int) -> EventSpec | None:
+        """Toggle a timed lap in the current session's telemetry pool."""
+        if not any(
+            lap["driver"] == code and lap["number"] == number
+            for lap in self.lap_points
+        ):
+            return None
+
+        if any(
+            lap["driver"] == code and lap["number"] == number
+            for lap in self.selected_laps
+        ):
+            self.selected_laps = [
+                lap
+                for lap in self.selected_laps
+                if lap["driver"] != code or lap["number"] != number
+            ]
+            return None
+
+        self.selected_laps = [*self.selected_laps, {"driver": code, "number": number}]
+        return rx.toast.success(
+            f"Lap {number} ({code}) added",
+            action={
+                "label": "View Telemetry",
+                "on_click": EventState.change_tab("telemetry"),
+            },
+        )
 
     @rx.event
     def set_show_outliers(self, value: bool) -> None:
@@ -274,6 +325,7 @@ class EventState(rx.State):
         self.lap_drivers = []
         self.lap_points = []
         self.selected_drivers = []
+        self.selected_laps = []
         self.show_outliers = False
         self.laps_loading = False
         self.laps_loaded = False
@@ -331,6 +383,8 @@ class EventState(rx.State):
         ):
             return
 
+        if session_code != self.selected_session:
+            self.selected_laps = []
         self.selected_session = session_code
         self.classification = []
         self.error = ""
@@ -435,7 +489,20 @@ def event_results() -> rx.Component:
                                     flex_basis="0",
                                 ),
                                 rx.tabs.trigger(
-                                    "Telemetry",
+                                    rx.hstack(
+                                        rx.text("Telemetry"),
+                                        rx.cond(
+                                            EventState.selected_lap_count > 0,
+                                            rx.badge(
+                                                EventState.selected_lap_count,
+                                                color_scheme="green",
+                                                variant="solid",
+                                                radius="full",
+                                            ),
+                                        ),
+                                        align="center",
+                                        spacing="2",
+                                    ),
                                     value="telemetry",
                                     flex_grow="1",
                                     flex_basis="0",
@@ -468,6 +535,7 @@ def event_results() -> rx.Component:
                                         EventState.lap_strip_lap_numbers,
                                         EventState.lap_strip_rows,
                                         EventState.selected_driver_count,
+                                        EventState.toggle_lap,
                                         EventState.show_outliers,
                                         EventState.set_show_outliers,
                                         EventState.laps_loading,
@@ -481,7 +549,7 @@ def event_results() -> rx.Component:
                                 width="100%",
                                 padding_top="1rem",
                             ),
-                            default_value="session",
+                            value=EventState.active_tab,
                             on_change=EventState.change_tab,
                             width="100%",
                         ),
