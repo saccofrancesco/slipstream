@@ -101,7 +101,7 @@ def _lap_strip_time_cell(cell: rx.Var[LapStripCell]) -> rx.Component:
         rx.text(
             cell["time"],
             font_weight="bold",
-            font_size="1rem",
+            size="3",
             font_variant_numeric="tabular-nums",
             white_space="nowrap",
         ),
@@ -138,112 +138,125 @@ def _lap_strip_time_cell(cell: rx.Var[LapStripCell]) -> rx.Component:
         height="3rem",
         padding_x="0.5rem",
         background_color=rx.color("gray", 3),
-        border="1px solid var(--gray-6)",
+        border_width="1px",
+        border_style="solid",
+        border_color=rx.color("gray", 5),
         border_radius="0.75rem",
         box_sizing="border-box",
     )
 
 
-def _lap_strip_row(
-    row: rx.Var[LapStripRow], grid_columns: rx.Var[str]
-) -> rx.Component:
+def _lap_strip_row(row: rx.Var[LapStripRow]) -> rx.Component:
     """Render one selected driver across the shared lap columns."""
-    return rx.grid(
-        rx.box(
-            rx.text(
-                row["code"],
-                font_size="1.125rem",
-                font_weight="medium",
-                white_space="nowrap",
-            ),
-            display="flex",
-            align_items="center",
-            padding_x="0.75rem",
+    return rx.table.row(
+        rx.table.row_header_cell(
+            rx.text(row["code"], size="3", weight="medium"),
+            scope="row",
             position="sticky",
             left="0",
             z_index="1",
             background_color=rx.color("gray", 2),
+            width="5rem",
+            min_width="5rem",
+            max_width="5rem",
+            padding_x="0.75rem",
+            white_space="nowrap",
+            border_top="1px solid var(--gray-5)",
         ),
-        rx.foreach(row["cells"], _lap_strip_time_cell),
-        grid_template_columns=grid_columns,
-        align_items="center",
-        width="100%",
-        min_width="max-content",
-        min_height="4rem",
-        border_top="1px solid var(--gray-6)",
+        rx.foreach(
+            row["cells"],
+            lambda cell: rx.table.cell(
+                _lap_strip_time_cell(cell),
+                width="10rem",
+                min_width="10rem",
+                max_width="10rem",
+                padding="0.5rem 0.75rem",
+                border_top="1px solid var(--gray-5)",
+            ),
+        ),
+        height="4rem",
     )
 
 
 def _lap_strip(
     lap_numbers: rx.Var[list[int]],
-    grid_columns: rx.Var[str],
     rows: rx.Var[list[LapStripRow]],
     selected_count: rx.Var[int],
 ) -> rx.Component:
     """Render the horizontally scrollable lap times for selected drivers."""
     return rx.cond(
         selected_count == 0,
-        rx.box(
+        rx.card(
             rx.text(
                 "Select a driver above to compare lap times.",
                 size="2",
                 color=rx.color("gray", 10),
                 text_align="center",
             ),
+            size="1",
             width="100%",
-            padding_y="4",
-            border="1px solid var(--gray-6)",
-            border_radius="0.75rem",
             background_color=rx.color("gray", 2),
+            border_width="1px",
+            border_style="solid",
+            border_color=rx.color("gray", 5),
         ),
         rx.box(
             rx.scroll_area(
-                rx.vstack(
-                    rx.grid(
-                        rx.box(
-                            rx.text("Lap:", font_size="1.125rem", font_weight="bold"),
-                            display="flex",
-                            align_items="center",
-                            padding_x="0.75rem",
-                            position="sticky",
-                            left="0",
-                            z_index="2",
-                            background_color=rx.color("gray", 2),
-                        ),
-                        rx.foreach(
-                            lap_numbers,
-                            lambda lap_number: rx.box(
-                                rx.text(
-                                    lap_number,
-                                    font_size="1.125rem",
-                                    font_weight="bold",
+                rx.table.root(
+                    rx.table.header(
+                        rx.table.row(
+                            rx.table.column_header_cell(
+                                rx.text("Lap:", size="3", weight="bold"),
+                                scope="col",
+                                position="sticky",
+                                top="0",
+                                left="0",
+                                z_index="3",
+                                background_color=rx.color("gray", 2),
+                                width="5rem",
+                                min_width="5rem",
+                                max_width="5rem",
+                                padding_x="0.75rem",
+                                white_space="nowrap",
+                            ),
+                            rx.foreach(
+                                lap_numbers,
+                                lambda lap_number: rx.table.column_header_cell(
+                                    rx.text(lap_number, size="3", weight="bold"),
+                                    scope="col",
+                                    position="sticky",
+                                    top="0",
+                                    z_index="2",
+                                    background_color=rx.color("gray", 2),
+                                    width="10rem",
+                                    min_width="10rem",
+                                    max_width="10rem",
+                                    padding="0.75rem",
                                     text_align="center",
                                 ),
-                                display="flex",
-                                align_items="center",
-                                justify_content="center",
                             ),
+                            height="4rem",
                         ),
-                        grid_template_columns=grid_columns,
-                        align_items="center",
-                        width="100%",
-                        min_width="max-content",
-                        min_height="4rem",
                     ),
-                    rx.foreach(rows, lambda row: _lap_strip_row(row, grid_columns)),
-                    align="stretch",
-                    spacing="0",
-                    width="100%",
-                    min_width="max-content",
+                    rx.table.body(rx.foreach(rows, _lap_strip_row)),
+                    variant="ghost",
+                    size="1",
+                    width="max-content",
+                    min_width="100%",
+                    border_collapse="separate",
+                    border_spacing="0",
+                    background_color=rx.color("gray", 2),
                 ),
                 scrollbars="horizontal",
                 type="auto",
                 style={"width": "100%"},
             ),
             width="100%",
-            border="1px solid var(--gray-6)",
-            border_radius="0.75rem",
             background_color=rx.color("gray", 2),
+            border_width="1px",
+            border_style="solid",
+            border_color=rx.color("gray", 5),
+            border_radius="0.75rem",
             overflow="hidden",
         ),
     )
@@ -370,7 +383,6 @@ def laps_section(
     driver_lines: rx.Var[list[DriverLine]],
     tyre_point_lines: rx.Var[list[TyrePointLine]],
     strip_lap_numbers: rx.Var[list[int]],
-    strip_grid_columns: rx.Var[str],
     strip_rows: rx.Var[list[LapStripRow]],
     selected_count: rx.Var[int],
     show_outliers: rx.Var[bool],
@@ -553,7 +565,6 @@ def laps_section(
                         ),
                         _lap_strip(
                             strip_lap_numbers,
-                            strip_grid_columns,
                             strip_rows,
                             selected_count,
                         ),
