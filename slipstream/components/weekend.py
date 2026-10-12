@@ -175,7 +175,6 @@ def race_weekend_card(
                 flex_wrap="wrap",
                 gap="3",
             ),
-            rx.separator(),
             rx.hstack(
                 rx.icon(
                     "map-pin",
