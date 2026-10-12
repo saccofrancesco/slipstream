@@ -10,19 +10,34 @@ from .layout import loading_card
 def _schedule_session_row(
     session: rx.Var[ScheduledSession], weekend: rx.Var[dict[str, str]]
 ) -> rx.Component:
-    """Keep the session, available results link, and time range on one row."""
+    """Keep the session, time range, and available results link on one row."""
     return rx.hstack(
+        rx.text(
+            session["name"],
+            size="2",
+            weight="medium",
+            color=rx.color("gray", 12),
+            overflow="hidden",
+            text_overflow="ellipsis",
+            white_space="nowrap",
+            min_width="0",
+            title=session["name"],
+            flex="1",
+        ),
         rx.hstack(
             rx.text(
-                session["name"],
+                rx.cond(
+                    session["end_time"] != "",
+                    f"{session['time']} - {session['end_time']}",
+                    session["time"],
+                ),
                 size="2",
-                weight="medium",
-                color=rx.color("gray", 12),
-                overflow="hidden",
-                text_overflow="ellipsis",
+                weight="bold",
+                color=rx.color("accent", 11),
                 white_space="nowrap",
-                min_width="0",
-                title=session["name"],
+                font_variant_numeric="tabular-nums",
+                text_align="right",
+                flex_shrink="0",
             ),
             rx.cond(
                 session["results_available"],
@@ -40,21 +55,6 @@ def _schedule_session_row(
             ),
             spacing="2",
             align="center",
-            min_width="0",
-            flex="1",
-        ),
-        rx.text(
-            rx.cond(
-                session["end_time"] != "",
-                f"{session['time']} - {session['end_time']}",
-                session["time"],
-            ),
-            size="2",
-            weight="bold",
-            color=rx.color("accent", 11),
-            white_space="nowrap",
-            font_variant_numeric="tabular-nums",
-            text_align="right",
             flex_shrink="0",
         ),
         justify="between",
