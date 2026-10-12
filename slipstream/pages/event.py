@@ -296,11 +296,18 @@ class EventState(rx.State):
             return None
 
         self.selected_laps = [*self.selected_laps, {"driver": code, "number": number}]
-        return rx.toast.success(
+        return rx.toast(
             f"Lap {number} ({code}) added",
             action={
                 "label": "View Telemetry",
                 "on_click": EventState.change_tab("telemetry"),
+            },
+            style={
+                "background": "var(--gray-2)",
+                "color": "var(--gray-12)",
+                "border": "1px solid var(--gray-6)",
+                "border_radius": "0.75rem",
+                "box_shadow": "0 8px 24px rgba(0, 0, 0, 0.16)",
             },
         )
 
@@ -495,8 +502,9 @@ def event_results() -> rx.Component:
                                             EventState.selected_lap_count > 0,
                                             rx.badge(
                                                 EventState.selected_lap_count,
-                                                color_scheme="green",
-                                                variant="solid",
+                                                color_scheme="gray",
+                                                variant="soft",
+                                                color=rx.color("accent", 11),
                                                 radius="full",
                                             ),
                                         ),
