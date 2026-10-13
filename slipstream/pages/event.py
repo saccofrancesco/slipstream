@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncGenerator
+from math import floor
 from typing import TypedDict
 
 import reflex as rx
@@ -12,6 +13,7 @@ from slipstream.components.classification import session_classification_section
 from slipstream.components.laps import (
     DriverChip,
     DriverLine,
+    LapChartAxis,
     LapStripCell,
     LapStripRow,
     TyrePointLine,
@@ -44,6 +46,44 @@ class SelectedLap(TypedDict):
 
     driver: str
     number: int
+
+
+def _lap_chart_axis(times: list[float]) -> LapChartAxis:
+    """Fit axis bounds and distinct labels to the laps plotted on the chart."""
+    if not times:
+        return {"domain": [0.0, 1.0], "ticks": [], "precision": 0, "width": 64}
+
+    lower, upper = min(times), max(times)
+    if lower == upper:
+        lower -= 0.5
+        upper += 0.5
+    else:
+        # Keep the endpoint dots clear of the chart's clipping boundary.
+        margin = (upper - lower) * 0.025
+        lower -= margin
+        upper += margin
+
+    # Use fewer ticks only when millisecond labels cannot distinguish five.
+    for tick_count in range(5, 1, -1):
+        ticks = [
+            lower + (upper - lower) * index / (tick_count - 1)
+            for index in range(tick_count)
+        ]
+        for precision in range(4):
+            scale = 10**precision
+            label_units = [
+                floor(tick) if precision == 0 else floor(tick * scale + 0.5)
+                for tick in ticks
+            ]
+            if len(set(label_units)) == tick_count:
+                return {
+                    "domain": [lower, upper],
+                    "ticks": ticks,
+                    "precision": precision,
+                    "width": 64 if precision == 0 else 72 if precision < 3 else 80,
+                }
+
+    return {"domain": [lower, upper], "ticks": [lower, upper], "precision": 3, "width": 80}
 
 
 class EventState(rx.State):
@@ -130,6 +170,18 @@ class EventState(rx.State):
             for lap in self.lap_points
             if self.show_outliers or not lap["outlier"]
         ]
+
+    @rx.var
+    def lap_chart_y_axis(self) -> LapChartAxis:
+        """Scale the chart to selected drivers after the outlier switch."""
+        selected_codes = set(self.selected_drivers)
+        return _lap_chart_axis(
+            [
+                lap["seconds"]
+                for lap in self.visible_lap_points
+                if lap["driver"] in selected_codes
+            ]
+        )
 
     @rx.var
     def driver_lines(self) -> list[DriverLine]:
@@ -548,6 +600,7 @@ def event_results() -> rx.Component:
                                         EventState.driver_chips,
                                         EventState.toggle_driver,
                                         EventState.lap_chart_data,
+                                        EventState.lap_chart_y_axis,
                                         EventState.driver_lines,
                                         EventState.tyre_point_lines,
                                         EventState.lap_strip_lap_numbers,
