@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from functools import lru_cache
-from math import isfinite
+from math import cos, isfinite, pi, sin
 from threading import Lock
 from typing import TypedDict
 
@@ -13,6 +13,7 @@ from fastf1.core import Lap, Session
 from fastf1.exceptions import DataNotLoadedError
 
 SAMPLE_SPACING_METRES: int = 5
+MINI_SECTOR_COUNT: int = 50
 _SESSION_LOCK: Lock = Lock()
 
 
@@ -39,6 +40,31 @@ class TelemetrySector(TypedDict):
     distance: int
 
 
+class TelemetryTrackPoint(TypedDict):
+    """One rotated circuit coordinate aligned to the shared distance grid."""
+
+    x: float
+    y: float
+
+
+class TelemetryTrackSegment(TypedDict):
+    """A mini-sector and the selected lap that traversed it fastest."""
+
+    start_index: int
+    end_index: int
+    winner_key: str
+
+
+class TelemetryTrackCorner(TypedDict):
+    """A numbered circuit corner and its outward label position."""
+
+    label: str
+    track_x: float
+    track_y: float
+    label_x: float
+    label_y: float
+
+
 class SessionTelemetry(TypedDict):
     """Six channel series sharing one distance grid."""
 
@@ -46,6 +72,9 @@ class SessionTelemetry(TypedDict):
     laps: list[TelemetryLap]
     corners: list[TelemetryCorner]
     sectors: list[TelemetrySector]
+    track_points: list[TelemetryTrackPoint]
+    track_segments: list[TelemetryTrackSegment]
+    track_corners: list[TelemetryTrackCorner]
     unavailable: list[str]
     baseline_key: str
     distance_metres: int
@@ -182,6 +211,136 @@ def _resample(
     }
 
 
+def _rotate_coordinates(
+    x: np.ndarray, y: np.ndarray, degrees: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Rotate FastF1 coordinates clockwise using the official track-map matrix."""
+    angle = degrees / 180 * pi
+    return x * cos(angle) + y * sin(angle), -x * sin(angle) + y * cos(angle)
+
+
+def _mini_sector_segments(
+    grid: np.ndarray,
+    laps: list[_LapSamples],
+    sampled: dict[str, dict[str, np.ndarray]],
+) -> list[TelemetryTrackSegment]:
+    """Compare local elapsed times across exactly 50 equal-distance bins."""
+    boundaries = np.linspace(float(grid[0]), float(grid[-1]), MINI_SECTOR_COUNT + 1)
+    boundary_indices = np.searchsorted(grid, boundaries, side="left")
+    boundary_indices[0] = 0
+    boundary_indices[-1] = len(grid) - 1
+    elapsed_at_boundaries = {
+        lap.key: np.interp(boundaries, grid, sampled[lap.key]["elapsed"])
+        for lap in laps
+    }
+    segments: list[TelemetryTrackSegment] = []
+    for index in range(MINI_SECTOR_COUNT):
+        # Python's min keeps the first item on exact ties, matching lap selection order.
+        winner = min(
+            laps,
+            key=lambda lap: float(
+                elapsed_at_boundaries[lap.key][index + 1]
+                - elapsed_at_boundaries[lap.key][index]
+            ),
+        )
+        segments.append(
+            {
+                "start_index": int(boundary_indices[index]),
+                "end_index": int(boundary_indices[index + 1]),
+                "winner_key": winner.key,
+            }
+        )
+    return segments
+
+
+def _track_geometry(
+    session: Session,
+    baseline: _LapSamples,
+    grid: np.ndarray,
+    available: list[_LapSamples],
+    sampled: dict[str, dict[str, np.ndarray]],
+) -> tuple[
+    list[TelemetryTrackPoint],
+    list[TelemetryTrackSegment],
+    list[TelemetryTrackCorner],
+]:
+    """Build the reference trace, local-time winners, and optional corner labels."""
+    try:
+        position = baseline.lap.get_pos_data(interpolate_edges=True)
+    except Exception:
+        return [], [], []
+    if position.empty:
+        return [], [], []
+
+    position_times = position["SessionTime"].dt.total_seconds().to_numpy(dtype=float)
+    position_x, position_y = _numeric(position["X"]), _numeric(position["Y"])
+    valid = (
+        np.isfinite(position_times)
+        & np.isfinite(position_x)
+        & np.isfinite(position_y)
+    )
+    if valid.sum() < 2:
+        return [], [], []
+    position_times = position_times[valid]
+    position_x = position_x[valid]
+    position_y = position_y[valid]
+    position_times, unique_indices = np.unique(position_times, return_index=True)
+    position_x, position_y = position_x[unique_indices], position_y[unique_indices]
+
+    grid_session_time = np.interp(grid, baseline.distance, baseline.session_time)
+    trace_x = np.interp(grid_session_time, position_times, position_x)
+    trace_y = np.interp(grid_session_time, position_times, position_y)
+
+    circuit_info = None
+    rotation = 0.0
+    try:
+        circuit_info = session.get_circuit_info()
+        if circuit_info is not None and isfinite(float(circuit_info.rotation)):
+            rotation = float(circuit_info.rotation)
+    except Exception:
+        # Position data is still useful when the optional circuit metadata fails.
+        circuit_info = None
+    trace_x, trace_y = _rotate_coordinates(trace_x, trace_y, rotation)
+    points = [
+        {"x": round(float(x), 3), "y": round(float(y), 3)}
+        for x, y in zip(trace_x, trace_y, strict=True)
+    ]
+
+    corners: list[TelemetryTrackCorner] = []
+    if circuit_info is not None and not circuit_info.corners.empty:
+        for _, corner in circuit_info.corners.iterrows():
+            try:
+                corner_x = float(corner.get("X"))
+                corner_y = float(corner.get("Y"))
+                number = float(corner.get("Number"))
+                angle = float(corner.get("Angle"))
+            except (TypeError, ValueError):
+                continue
+            if not all(isfinite(value) for value in (corner_x, corner_y, number, angle)):
+                continue
+            letter = corner.get("Letter")
+            suffix = "" if pd.isna(letter) else str(letter).strip()
+            offset_angle = angle / 180 * pi
+            label_x = corner_x + cos(offset_angle) * 500
+            label_y = corner_y + sin(offset_angle) * 500
+            rotated_x, rotated_y = _rotate_coordinates(
+                np.array([corner_x, label_x]),
+                np.array([corner_y, label_y]),
+                rotation,
+            )
+            corners.append(
+                {
+                    "label": f"{int(number)}{suffix}",
+                    "track_x": round(float(rotated_x[0]), 3),
+                    "track_y": round(float(rotated_y[0]), 3),
+                    "label_x": round(float(rotated_x[1]), 3),
+                    "label_y": round(float(rotated_y[1]), 3),
+                }
+            )
+
+    return points, _mini_sector_segments(grid, available, sampled), corners
+
+
 def _corner_distances(session: Session, baseline: _LapSamples) -> list[TelemetryCorner]:
     """Project circuit corner coordinates onto the baseline lap's position trace."""
     try:
@@ -285,6 +444,9 @@ def get_session_telemetry(
             "laps": [],
             "corners": [],
             "sectors": [],
+            "track_points": [],
+            "track_segments": [],
+            "track_corners": [],
             "unavailable": unavailable,
             "baseline_key": "",
             "distance_metres": 0,
@@ -294,6 +456,9 @@ def get_session_telemetry(
     length = float(baseline.distance[-1])
     grid = np.append(np.arange(0, length, SAMPLE_SPACING_METRES), length)
     sampled = {lap.key: _resample(lap, grid, length) for lap in available}
+    track_points, track_segments, track_corners = _track_geometry(
+        session, baseline, grid, available, sampled
+    )
     baseline_elapsed = sampled[baseline.key]["elapsed"]
     rows: list[dict[str, float | int]] = []
     for index, distance in enumerate(grid):
@@ -324,6 +489,9 @@ def get_session_telemetry(
         ],
         "corners": _corner_distances(session, baseline),
         "sectors": _sector_distances(baseline),
+        "track_points": track_points,
+        "track_segments": track_segments,
+        "track_corners": track_corners,
         "unavailable": unavailable,
         "baseline_key": baseline.key,
         "distance_metres": int(round(length)),
