@@ -26,6 +26,12 @@ from .api import (
     has_session_results,
     get_driver_standings,
 )
+from .telemetry import (
+    SessionTelemetry,
+    TelemetryCorner,
+    TelemetryLap,
+    get_session_telemetry,
+)
 
 __all__: list[str] = [
     "DriverClassification",
@@ -38,6 +44,9 @@ __all__: list[str] = [
     "ScheduledSession",
     "SessionOption",
     "SessionLaps",
+    "SessionTelemetry",
+    "TelemetryCorner",
+    "TelemetryLap",
     "TrackSessionDetails",
     "get_available_seasons",
     "get_completed_races",
@@ -49,6 +58,7 @@ __all__: list[str] = [
     "get_track_time_offsets",
     "get_session_classification",
     "get_session_laps",
+    "get_session_telemetry",
     "format_weekend_schedule",
     "has_session_results",
     "get_driver_standings",
