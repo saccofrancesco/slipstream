@@ -10,11 +10,6 @@ from reflex.event import EventSpec
 
 from slipstream.components import container, loading_card, navbar, status_card
 from slipstream.components.classification import session_classification_section
-from slipstream.components.circuit_map import (
-    CircuitCorner,
-    CircuitPoint,
-    CircuitSegment,
-)
 from slipstream.components.laps import (
     DriverChip,
     DriverLine,
@@ -31,6 +26,11 @@ from slipstream.components.telemetry import (
     TelemetryLine,
     build_telemetry_axes,
     telemetry_section,
+)
+from slipstream.components.trackmap import (
+    TrackmapCorner,
+    TrackmapPoint,
+    TrackmapSegment,
 )
 from slipstream.components.weekend import event_header
 from slipstream.services import (
@@ -138,6 +138,7 @@ class EventState(rx.State):
     telemetry_baseline_key: str = ""
     telemetry_distance_metres: int = 0
     telemetry_loaded_for: str = ""
+    telemetry_animation_iteration: int = 0
     telemetry_loading: bool = False
     telemetry_error: str = ""
 
@@ -419,7 +420,7 @@ class EventState(rx.State):
         return build_telemetry_axes(self.telemetry_rows, self.telemetry_lines)
 
     @rx.var
-    def telemetry_track_points(self) -> list[CircuitPoint]:
+    def telemetry_track_points(self) -> list[TrackmapPoint]:
         """Return reference-lap coordinates for the local SVG component."""
         return [
             {"x": float(point["x"]), "y": float(point["y"])}
@@ -427,20 +428,37 @@ class EventState(rx.State):
         ]
 
     @rx.var
-    def telemetry_track_segments(self) -> list[CircuitSegment]:
-        """Resolve each mini-sector winner to its chart stroke color."""
+    def telemetry_track_segments(self) -> list[TrackmapSegment]:
+        """Resolve colors and merge adjacent mini-sectors won by one driver."""
         colors = {line["key"]: line["color"] for line in self.telemetry_lines}
-        return [
-            {
-                "start_index": int(segment["start_index"]),
-                "end_index": int(segment["end_index"]),
-                "color": colors.get(str(segment["winner_key"]), "#FFFFFF"),
-            }
-            for segment in self.telemetry_track_segment_rows
-        ]
+        drivers = {
+            str(lap["key"]): str(lap["driver"]) for lap in self.telemetry_laps
+        }
+        merged: list[TrackmapSegment] = []
+        for segment in self.telemetry_track_segment_rows:
+            winner_key = str(segment["winner_key"])
+            winner = drivers.get(winner_key, winner_key)
+            start_index = int(segment["start_index"])
+            end_index = int(segment["end_index"])
+            if (
+                merged
+                and merged[-1]["winner"] == winner
+                and start_index <= merged[-1]["end_index"] + 1
+            ):
+                merged[-1]["end_index"] = end_index
+                continue
+            merged.append(
+                {
+                    "start_index": start_index,
+                    "end_index": end_index,
+                    "color": colors.get(winner_key, "#FFFFFF"),
+                    "winner": winner,
+                }
+            )
+        return merged
 
     @rx.var
-    def telemetry_track_corners(self) -> list[CircuitCorner]:
+    def telemetry_track_corners(self) -> list[TrackmapCorner]:
         """Return rotated track and label coordinates for numbered corners."""
         return [
             {
@@ -452,6 +470,11 @@ class EventState(rx.State):
             }
             for corner in self.telemetry_track_corner_rows
         ]
+
+    @rx.var
+    def telemetry_animation_key(self) -> str:
+        """Restart map and chart animations whenever Telemetry becomes active."""
+        return f"{self.telemetry_loaded_for}:{self.telemetry_animation_iteration}"
 
     @rx.var
     def telemetry_corners(self) -> list[CornerMark]:
@@ -497,6 +520,8 @@ class EventState(rx.State):
     async def change_tab(self, tab: str) -> AsyncGenerator[EventSpec | None, None]:
         """Load lap or telemetry data when its tab becomes active."""
         self.active_tab = tab
+        if tab == "telemetry":
+            self.telemetry_animation_iteration += 1
         if tab == "laps" and self.event and not self.laps_loaded and not self.laps_loading:
             async for update in self._load_laps(self.selected_session):
                 yield update
@@ -550,7 +575,9 @@ class EventState(rx.State):
         if self.telemetry_unavailable and self.telemetry_laps:
             yield rx.toast(
                 "No usable telemetry for: " + ", ".join(self.telemetry_unavailable),
-                duration=7000,
+                close_button=True,
+                dismissible=True,
+                duration=4500,
             )
 
     @rx.event
@@ -597,6 +624,9 @@ class EventState(rx.State):
         self._clear_telemetry()
         return rx.toast(
             f"Lap {number} ({code}) added",
+            close_button=True,
+            dismissible=True,
+            duration=4500,
             action={
                 "label": "View Telemetry",
                 "on_click": EventState.change_tab("telemetry"),
@@ -636,6 +666,7 @@ class EventState(rx.State):
         self.laps_loading = False
         self.laps_loaded = False
         self.laps_error = ""
+        self.telemetry_animation_iteration = 0
         self._clear_telemetry()
         yield
 
@@ -863,7 +894,7 @@ def event_results() -> rx.Component:
                                         EventState.telemetry_track_points,
                                         EventState.telemetry_track_segments,
                                         EventState.telemetry_track_corners,
-                                        EventState.telemetry_loaded_for,
+                                        EventState.telemetry_animation_key,
                                         EventState.telemetry_corners,
                                         EventState.telemetry_sectors,
                                         EventState.telemetry_unavailable,
