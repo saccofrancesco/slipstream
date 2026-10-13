@@ -5,8 +5,8 @@ from typing import TypedDict
 
 import reflex as rx
 
-from .circuit_map import CircuitCorner, CircuitPoint, CircuitSegment, circuit_map
 from .layout import loading_card, status_card
+from .trackmap import TrackmapCorner, TrackmapPoint, TrackmapSegment, trackmap
 
 CHART_MARGIN: dict[str, int] = {"top": 10, "right": 20, "left": 0, "bottom": 4}
 CHART_MIN_WIDTH: str = "900px"
@@ -185,7 +185,9 @@ def _chart_line(line: rx.Var[TelemetryLine], metric: str) -> rx.Component:
         stroke_dasharray=line["dash"],
         dot=False,
         active_dot=False,
-        is_animation_active=False,
+        is_animation_active=True,
+        animation_duration=900,
+        animation_easing="ease-out",
     )
 
 
@@ -334,9 +336,9 @@ def telemetry_section(
     rows: rx.Var[list[dict[str, float | int]]],
     lines: rx.Var[list[TelemetryLine]],
     axes: rx.Var[dict[str, TelemetryAxis]],
-    track_points: rx.Var[list[CircuitPoint]],
-    track_segments: rx.Var[list[CircuitSegment]],
-    track_corners: rx.Var[list[CircuitCorner]],
+    track_points: rx.Var[list[TrackmapPoint]],
+    track_segments: rx.Var[list[TrackmapSegment]],
+    track_corners: rx.Var[list[TrackmapCorner]],
     animation_key: rx.Var[str],
     corners: rx.Var[list[CornerMark]],
     sectors: rx.Var[list[SectorMark]],
@@ -389,12 +391,12 @@ def telemetry_section(
                     rx.vstack(
                         rx.cond(
                             track_points.length() > 1,
-                            circuit_map(
+                            trackmap(
                                 points=track_points,
                                 segments=track_segments,
                                 corners=track_corners,
                                 animation_key=animation_key,
-                                duration_ms=2500,
+                                duration_ms=2200,
                             ),
                             rx.fragment(),
                         ),
@@ -459,6 +461,7 @@ def telemetry_section(
                                 min_width=CHART_MIN_WIDTH,
                                 align="stretch",
                                 gap="0.75rem",
+                                key=animation_key,
                             ),
                             width="100%",
                             min_width="0",
