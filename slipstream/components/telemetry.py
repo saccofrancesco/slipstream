@@ -168,19 +168,11 @@ def _telemetry_chart(
     """Build one channel with the same x scale and synchronized cursor."""
     axis_props: dict[str, object] = {"domain": ["dataMin", "dataMax"]}
     if metric == "throttle":
-        axis_props = {"domain": [0, 100], "ticks": [0, 50, 100]}
+        axis_props = {"domain": [0, 100]}
     elif metric == "brake":
-        axis_props = {"domain": [0, 1], "ticks": [0, 1]}
+        axis_props = {"domain": [0, 1]}
     elif metric == "gear":
-        axis_props = {"domain": [0, 8], "ticks": [0, 2, 4, 6, 8]}
-
-    axis_formatter = (
-        '(value) => value ? "ON" : "OFF"'
-        if metric == "brake"
-        else '(value) => `${value > 0 ? "+" : ""}${Number(value).toFixed(3)}`'
-        if metric == "delta"
-        else '(value) => `${Math.round(value)}`'
-    )
+        axis_props = {"domain": [0, 8]}
     return rx.recharts.line_chart(
         rx.recharts.cartesian_grid(
             stroke=rx.color("gray", 5), stroke_dasharray="3 5", vertical=False
@@ -201,14 +193,12 @@ def _telemetry_chart(
         rx.recharts.y_axis(
             type_="number",
             width=68,
-            tick_count=5,
             padding={"top": 8, "bottom": 8},
-            allow_decimals=metric == "delta",
             allow_data_overflow=True,
             axis_line=False,
             tick_line=False,
+            tick=False,
             stroke=rx.color("gray", 10),
-            tick_formatter=axis_formatter,
             label={
                 "value": axis_label,
                 "angle": -90,
@@ -277,7 +267,7 @@ def telemetry_section(
     on_open_laps: rx.EventHandler,
     on_retry: rx.EventHandler,
 ) -> rx.Component:
-    """Render selection states and the compact six-chart comparison panel."""
+    """Render selection states and the six-chart comparison stack."""
     return rx.cond(
         selected_count == 0,
         rx.vstack(
@@ -339,16 +329,12 @@ def telemetry_section(
                             width="100%",
                             min_width=CHART_MIN_WIDTH,
                             align="stretch",
-                            spacing="0",
+                            gap="0.75rem",
                         ),
                         width="100%",
                         min_width="0",
                         overflow_x="auto",
                         overflow_y="hidden",
-                        border="1px solid var(--gray-6)",
-                        border_radius="16px",
-                        padding="0.5rem 0.75rem",
-                        box_sizing="border-box",
                     ),
                 ),
             ),
