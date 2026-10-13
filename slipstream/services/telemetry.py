@@ -30,7 +30,6 @@ class TelemetryCorner(TypedDict):
 
     label: str
     distance: int
-    lane: int
 
 
 class TelemetrySector(TypedDict):
@@ -221,22 +220,8 @@ def _corner_distances(session: Session, baseline: _LapSamples) -> list[Telemetry
             continue
         letter = corner.get("Letter")
         suffix = "" if pd.isna(letter) else str(letter).strip()
-        corners.append(
-            {"label": f"{int(number)}{suffix}", "distance": distance, "lane": 0}
-        )
+        corners.append({"label": f"{int(number)}{suffix}", "distance": distance})
     corners.sort(key=lambda corner: corner["distance"])
-    last_by_lane = [-1_000, -1_000, -1_000]
-    for corner in corners:
-        lane = next(
-            (
-                index
-                for index, last in enumerate(last_by_lane)
-                if corner["distance"] - last >= 140
-            ),
-            min(range(3), key=lambda index: last_by_lane[index]),
-        )
-        corner["lane"] = lane
-        last_by_lane[lane] = corner["distance"]
     return corners
 
 
