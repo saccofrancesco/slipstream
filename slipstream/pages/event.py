@@ -407,7 +407,6 @@ class EventState(rx.State):
             {
                 "label": str(corner["label"]),
                 "distance": int(corner["distance"]),
-                "lane": int(corner["lane"]),
             }
             for corner in self.telemetry_corner_rows
         ]
