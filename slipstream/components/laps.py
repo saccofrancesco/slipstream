@@ -48,6 +48,7 @@ class LapStripCell(TypedDict):
     tyre_icon: str
     tyre_alt: str
     has_lap: bool
+    fastest: bool
     selected: bool
 
 
@@ -158,9 +159,9 @@ def _lap_strip_time_cell(
         height="2.25rem",
         padding_x="0.375rem",
         background_color=rx.color("gray", 3),
-        border_width="1px",
+        border_width=rx.cond(cell["fastest"], "2px", "1px"),
         border_style="solid",
-        border_color=rx.color("gray", 5),
+        border_color=rx.cond(cell["fastest"], "#0A9800", rx.color("gray", 5)),
         border_radius="0.625rem",
         box_sizing="border-box",
         color=rx.color("gray", 12),
