@@ -1,5 +1,6 @@
 """Six synchronized distance charts for selected FastF1 laps."""
 
+from math import floor
 from typing import TypedDict
 
 import reflex as rx
@@ -35,6 +36,13 @@ class TelemetryLine(TypedDict):
     gear_key: str
 
 
+class TelemetryAxis(TypedDict):
+    """Visible tick values and a range containing every plotted sample."""
+
+    domain: list[float]
+    ticks: list[float]
+
+
 class CornerMark(TypedDict):
     """Circuit corner and its projected position on the distance axis."""
 
@@ -47,6 +55,58 @@ class SectorMark(TypedDict):
 
     label: str
     distance: int
+
+
+def _channel_values(
+    rows: list[dict[str, float | int]], lines: list[TelemetryLine], metric: str
+) -> list[float]:
+    """Read only the loaded laps' samples for one telemetry channel."""
+    keys = [f"{metric}_{line['key']}" for line in lines]
+    return [float(row[key]) for row in rows for key in keys if key in row]
+
+
+def _stepped_axis(values: list[float], first: int, step: int) -> TelemetryAxis:
+    """Show each reached multiple while retaining all samples in the domain."""
+    low = min([float(first), *values])
+    high = max([float(first), *values])
+    if low == high:
+        low -= step / 2
+        high += step / 2
+    last_tick = max(first, floor(high / step) * step)
+    return {
+        "domain": [low, high],
+        "ticks": [float(value) for value in range(first, last_tick + 1, step)],
+    }
+
+
+def build_telemetry_axes(
+    rows: list[dict[str, float | int]], lines: list[TelemetryLine]
+) -> dict[str, TelemetryAxis]:
+    """Fit the six y-axes to the selected laps' distance-aligned samples."""
+    speed = _channel_values(rows, lines, "speed")
+    delta = _channel_values(rows, lines, "delta")
+    rpm = _channel_values(rows, lines, "rpm")
+    gear = _channel_values(rows, lines, "gear")
+    largest_delta = max((abs(value) for value in delta), default=0.0)
+    delta_extent = largest_delta if largest_delta > 0 else 0.1
+    return {
+        "speed": _stepped_axis(speed, 100, 50),
+        "delta": {
+            "domain": [-delta_extent, delta_extent],
+            "ticks": (
+                [-largest_delta / 2, 0.0, largest_delta / 2]
+                if largest_delta > 0
+                else [0.0]
+            ),
+        },
+        "throttle": {"domain": [0.0, 100.0], "ticks": [20.0, 60.0, 100.0]},
+        "brake": {"domain": [0.0, 1.0], "ticks": [0.0, 1.0]},
+        "rpm": _stepped_axis(rpm, 2000, 2000),
+        "gear": {
+            "domain": [0.0, 8.0],
+            "ticks": [1.0, 3.0, 5.0, 7.0] if 1.0 in gear else [2.0, 4.0, 6.0, 8.0],
+        },
+    }
 
 
 def _tooltip_formatter(metric: str) -> rx.Var:
@@ -155,18 +215,20 @@ def _telemetry_chart(
     axis_label: str,
     rows: rx.Var[list[dict[str, float | int]]],
     lines: rx.Var[list[TelemetryLine]],
+    axis: rx.Var[TelemetryAxis],
     corners: rx.Var[list[CornerMark]],
     sectors: rx.Var[list[SectorMark]],
     last: bool = False,
 ) -> rx.Component:
     """Build one channel with the same x scale and synchronized cursor."""
-    axis_props: dict[str, object] = {"domain": ["dataMin", "dataMax"]}
-    if metric == "throttle":
-        axis_props = {"domain": [0, 100]}
-    elif metric == "brake":
-        axis_props = {"domain": [0, 1]}
-    elif metric == "gear":
-        axis_props = {"domain": [0, 8]}
+    tick_formatter = (
+        '(value) => Number(value) >= 0.5 ? "ON" : "OFF"'
+        if metric == "brake"
+        else '(value) => { const n = Number(value); return n === 0 ? "0" : '
+        '`${n > 0 ? "+" : ""}${Number(n.toFixed(4))}`; }'
+        if metric == "delta"
+        else None
+    )
     return rx.recharts.line_chart(
         rx.recharts.cartesian_grid(
             stroke=rx.color("gray", 5), stroke_dasharray="3 5", vertical=False
@@ -187,20 +249,24 @@ def _telemetry_chart(
         rx.recharts.y_axis(
             type_="number",
             width=68,
+            domain=axis["domain"],
             padding={"top": 8, "bottom": 8},
             allow_data_overflow=True,
             axis_line=False,
             tick_line=False,
-            tick=False,
+            tick={"fontSize": 11},
+            interval=0,
+            tick_formatter=tick_formatter,
+            custom_attrs={"niceTicks": "none", "ticks": axis["ticks"]},
             stroke=rx.color("gray", 10),
             label={
                 "value": axis_label,
                 "angle": -90,
                 "position": "insideLeft",
+                "textAnchor": "middle",
                 "fill": rx.color("gray", 10),
                 "fontSize": 12,
             },
-            **axis_props,
         ),
         rx.foreach(corners, _corner_line),
         rx.foreach(sectors, _sector_line),
@@ -252,6 +318,7 @@ def _telemetry_chart(
 def telemetry_section(
     rows: rx.Var[list[dict[str, float | int]]],
     lines: rx.Var[list[TelemetryLine]],
+    axes: rx.Var[dict[str, TelemetryAxis]],
     corners: rx.Var[list[CornerMark]],
     sectors: rx.Var[list[SectorMark]],
     unavailable: rx.Var[list[str]],
@@ -303,22 +370,59 @@ def telemetry_section(
                     rx.box(
                         rx.vstack(
                             _telemetry_chart(
-                                "speed", "SPEED (km/h)", rows, lines, corners, sectors
+                                "speed",
+                                "SPEED (km/h)",
+                                rows,
+                                lines,
+                                axes["speed"],
+                                corners,
+                                sectors,
                             ),
                             _telemetry_chart(
-                                "delta", "DELTA (s)", rows, lines, corners, sectors
+                                "delta",
+                                "DELTA (s)",
+                                rows,
+                                lines,
+                                axes["delta"],
+                                corners,
+                                sectors,
                             ),
                             _telemetry_chart(
-                                "throttle", "THROTTLE (%)", rows, lines, corners, sectors
+                                "throttle",
+                                "THROTTLE (%)",
+                                rows,
+                                lines,
+                                axes["throttle"],
+                                corners,
+                                sectors,
                             ),
                             _telemetry_chart(
-                                "brake", "BRAKE", rows, lines, corners, sectors
+                                "brake",
+                                "BRAKE",
+                                rows,
+                                lines,
+                                axes["brake"],
+                                corners,
+                                sectors,
                             ),
                             _telemetry_chart(
-                                "rpm", "RPM", rows, lines, corners, sectors
+                                "rpm",
+                                "RPM",
+                                rows,
+                                lines,
+                                axes["rpm"],
+                                corners,
+                                sectors,
                             ),
                             _telemetry_chart(
-                                "gear", "GEAR", rows, lines, corners, sectors, last=True
+                                "gear",
+                                "GEAR",
+                                rows,
+                                lines,
+                                axes["gear"],
+                                corners,
+                                sectors,
+                                last=True,
                             ),
                             width="100%",
                             min_width=CHART_MIN_WIDTH,
