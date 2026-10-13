@@ -19,6 +19,7 @@ from slipstream.components.laps import (
     TyrePointLine,
     laps_section,
 )
+from slipstream.components.telemetry import CornerMark, TelemetryLine, telemetry_section
 from slipstream.components.weekend import event_header
 from slipstream.services import (
     DriverClassification,
@@ -26,10 +27,14 @@ from slipstream.services import (
     LapDriver,
     LapPoint,
     SessionLaps,
+    SessionTelemetry,
     SessionOption,
+    TelemetryCorner,
+    TelemetryLap,
     get_event_details,
     get_session_classification,
     get_session_laps,
+    get_session_telemetry,
 )
 
 TYRE_ICON_PATHS: dict[str, str] = {
@@ -106,6 +111,15 @@ class EventState(rx.State):
     laps_loading: bool = False
     laps_loaded: bool = False
     laps_error: str = ""
+    telemetry_rows: list[dict[str, float | int]] = []
+    telemetry_laps: list[TelemetryLap] = []
+    telemetry_corner_rows: list[TelemetryCorner] = []
+    telemetry_unavailable: list[str] = []
+    telemetry_baseline_key: str = ""
+    telemetry_distance_metres: int = 0
+    telemetry_loaded_for: str = ""
+    telemetry_loading: bool = False
+    telemetry_error: str = ""
 
     @rx.var
     def has_event(self) -> bool:
@@ -319,13 +333,150 @@ class EventState(rx.State):
         """Return the number of unique laps in the telemetry pool."""
         return len(self.selected_laps)
 
+    @rx.var
+    def telemetry_lines(self) -> list[TelemetryLine]:
+        """Match the Laps chart's team colors and distinguish repeat laps."""
+        driver_by_code = {driver["code"]: driver for driver in self.lap_drivers}
+        active_chip_colors = {
+            chip["code"]: chip["plot_color"]
+            for chip in self.driver_chips
+            if chip["selected"]
+        }
+        first_by_team: set[str] = set()
+        color_by_driver: dict[str, str] = {}
+        repeats_by_driver: dict[str, int] = {}
+        dash_styles = ("", "7 4", "2 4", "10 3 2 3")
+        lines: list[TelemetryLine] = []
+        for lap in self.telemetry_laps:
+            driver = str(lap["driver"])
+            key = str(lap["key"])
+            metadata = driver_by_code.get(driver)
+            team = (metadata["team"] or driver) if metadata else driver
+            if driver not in color_by_driver:
+                color = metadata["team_color"] if metadata else "#FFFFFF"
+                if team in first_by_team:
+                    color = "#FFFFFF"
+                else:
+                    first_by_team.add(team)
+                color_by_driver[driver] = active_chip_colors.get(driver, color)
+            color = color_by_driver[driver]
+            repeat = repeats_by_driver.get(driver, 0)
+            repeats_by_driver[driver] = repeat + 1
+            seconds = float(lap["seconds"])
+            minutes = int(seconds // 60)
+            lines.append(
+                {
+                    "key": key,
+                    "label": f"{driver} L{lap['number']}",
+                    "time": f"{minutes}:{seconds - minutes * 60:06.3f}",
+                    "color": color,
+                    "dash": dash_styles[repeat % len(dash_styles)],
+                    "baseline": key == self.telemetry_baseline_key,
+                    "speed_key": f"speed_{key}",
+                    "delta_key": f"delta_{key}",
+                    "throttle_key": f"throttle_{key}",
+                    "brake_key": f"brake_{key}",
+                    "rpm_key": f"rpm_{key}",
+                    "gear_key": f"gear_{key}",
+                }
+            )
+        return lines
+
+    @rx.var
+    def telemetry_corners(self) -> list[CornerMark]:
+        """Align corner labels with each chart's fixed plot margins."""
+        length = self.telemetry_distance_metres
+        if length <= 0:
+            return []
+        result: list[CornerMark] = []
+        for corner in self.telemetry_corner_rows:
+            fraction = int(corner["distance"]) / length
+            result.append(
+                {
+                    "label": str(corner["label"]),
+                    "distance": int(corner["distance"]),
+                    "lane": int(corner["lane"]),
+                    "left": f"calc({fraction * 100:.5f}% + {68 - 88 * fraction:.2f}px)",
+                }
+            )
+        return result
+
+    def _telemetry_selection_key(self) -> str:
+        """Identify the session and exact selected lap pool for stale-load checks."""
+        laps = ",".join(f"{lap['driver']}:{lap['number']}" for lap in self.selected_laps)
+        return f"{self.event_season}:{self.round_number}:{self.selected_session}:{laps}"
+
+    def _clear_telemetry(self) -> None:
+        """Drop chart data when the selected session or laps change."""
+        self.telemetry_rows = []
+        self.telemetry_laps = []
+        self.telemetry_corner_rows = []
+        self.telemetry_unavailable = []
+        self.telemetry_baseline_key = ""
+        self.telemetry_distance_metres = 0
+        self.telemetry_loaded_for = ""
+        self.telemetry_loading = False
+        self.telemetry_error = ""
+
     @rx.event
     async def change_tab(self, tab: str) -> AsyncGenerator[None, None]:
-        """Load the selected session's laps the first time its tab opens."""
+        """Load lap or telemetry data when its tab becomes active."""
         self.active_tab = tab
         if tab == "laps" and self.event and not self.laps_loaded and not self.laps_loading:
             async for update in self._load_laps(self.selected_session):
                 yield update
+        if (
+            tab == "telemetry"
+            and self.selected_laps
+            and self.telemetry_loaded_for != self._telemetry_selection_key()
+            and not self.telemetry_loading
+        ):
+            async for update in self._load_telemetry():
+                yield update
+
+    async def _load_telemetry(self) -> AsyncGenerator[None, None]:
+        """Fetch the current lap pool without blocking tab interaction."""
+        request_key = self._telemetry_selection_key()
+        requested_laps = [
+            (lap["driver"], lap["number"]) for lap in self.selected_laps
+        ]
+        self.telemetry_loading = True
+        self.telemetry_error = ""
+        yield
+        try:
+            data: SessionTelemetry = await asyncio.to_thread(
+                get_session_telemetry,
+                self.event_season,
+                self.round_number,
+                self.selected_session,
+                requested_laps,
+            )
+        except Exception:
+            if self._telemetry_selection_key() == request_key:
+                self.telemetry_error = (
+                    "Could not load the selected laps' telemetry. Please try again."
+                )
+                self.telemetry_loading = False
+            return
+        if self._telemetry_selection_key() != request_key:
+            return
+        self.telemetry_rows = data["rows"]
+        self.telemetry_laps = data["laps"]
+        self.telemetry_corner_rows = data["corners"]
+        self.telemetry_unavailable = data["unavailable"]
+        self.telemetry_baseline_key = data["baseline_key"]
+        self.telemetry_distance_metres = data["distance_metres"]
+        self.telemetry_loaded_for = request_key
+        self.telemetry_loading = False
+
+    @rx.event
+    async def retry_telemetry(self) -> AsyncGenerator[None, None]:
+        """Retry the current lap pool after a telemetry load failure."""
+        if not self.selected_laps or self.telemetry_loading:
+            return
+        self._clear_telemetry()
+        async for update in self._load_telemetry():
+            yield update
 
     @rx.event
     def toggle_driver(self, code: str) -> None:
@@ -355,9 +506,11 @@ class EventState(rx.State):
                 for lap in self.selected_laps
                 if lap["driver"] != code or lap["number"] != number
             ]
+            self._clear_telemetry()
             return None
 
         self.selected_laps = [*self.selected_laps, {"driver": code, "number": number}]
+        self._clear_telemetry()
         return rx.toast(
             f"Lap {number} ({code}) added",
             action={
@@ -399,6 +552,7 @@ class EventState(rx.State):
         self.laps_loading = False
         self.laps_loaded = False
         self.laps_error = ""
+        self._clear_telemetry()
         yield
 
         try:
@@ -464,6 +618,7 @@ class EventState(rx.State):
         self.laps_loading = self.active_tab == "laps"
         self.laps_loaded = False
         self.laps_error = ""
+        self._clear_telemetry()
         yield
 
         await self._load_classification(session_code)
@@ -616,7 +771,22 @@ def event_results() -> rx.Component:
                                     value="laps",
                                     width="100%",
                                 ),
-                                rx.tabs.content(value="telemetry"),
+                                rx.tabs.content(
+                                    telemetry_section(
+                                        EventState.selected_session_label,
+                                        EventState.telemetry_rows,
+                                        EventState.telemetry_lines,
+                                        EventState.telemetry_corners,
+                                        EventState.telemetry_unavailable,
+                                        EventState.selected_lap_count,
+                                        EventState.telemetry_loading,
+                                        EventState.telemetry_error,
+                                        EventState.change_tab("laps"),
+                                        EventState.retry_telemetry,
+                                    ),
+                                    value="telemetry",
+                                    width="100%",
+                                ),
                                 width="100%",
                                 padding_top="1rem",
                             ),
