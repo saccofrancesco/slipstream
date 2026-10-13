@@ -1,0 +1,58 @@
+.trackmap {
+  display: block;
+  width: 100%;
+  height: clamp(15rem, 38vw, 30rem);
+  overflow: visible;
+}
+
+.trackmap__white-path,
+.trackmap__colored-path {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+}
+
+.trackmap__white-path {
+  animation: trackmap-draw-white var(--trackmap-white-duration)
+    cubic-bezier(0.65, 0, 0.35, 1) forwards;
+}
+
+.trackmap__colored-path {
+  animation: trackmap-draw-color var(--trackmap-color-duration) ease-out
+    var(--trackmap-color-delay) forwards;
+}
+
+.trackmap__corners {
+  opacity: 0;
+  animation: trackmap-corners 320ms ease-out var(--trackmap-corner-delay) forwards;
+}
+
+@keyframes trackmap-draw-white {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes trackmap-draw-color {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes trackmap-corners {
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trackmap__white-path,
+  .trackmap__colored-path {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+
+  .trackmap__corners {
+    animation: none;
+    opacity: 1;
+  }
+}
