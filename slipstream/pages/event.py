@@ -10,6 +10,11 @@ from reflex.event import EventSpec
 
 from slipstream.components import container, loading_card, navbar, status_card
 from slipstream.components.classification import session_classification_section
+from slipstream.components.circuit_map import (
+    CircuitCorner,
+    CircuitPoint,
+    CircuitSegment,
+)
 from slipstream.components.laps import (
     DriverChip,
     DriverLine,
@@ -39,6 +44,9 @@ from slipstream.services import (
     TelemetryCorner,
     TelemetryLap,
     TelemetrySector,
+    TelemetryTrackCorner,
+    TelemetryTrackPoint,
+    TelemetryTrackSegment,
     get_event_details,
     get_session_classification,
     get_session_laps,
@@ -123,6 +131,9 @@ class EventState(rx.State):
     telemetry_laps: list[TelemetryLap] = []
     telemetry_corner_rows: list[TelemetryCorner] = []
     telemetry_sector_rows: list[TelemetrySector] = []
+    telemetry_track_point_rows: list[TelemetryTrackPoint] = []
+    telemetry_track_segment_rows: list[TelemetryTrackSegment] = []
+    telemetry_track_corner_rows: list[TelemetryTrackCorner] = []
     telemetry_unavailable: list[str] = []
     telemetry_baseline_key: str = ""
     telemetry_distance_metres: int = 0
@@ -408,6 +419,41 @@ class EventState(rx.State):
         return build_telemetry_axes(self.telemetry_rows, self.telemetry_lines)
 
     @rx.var
+    def telemetry_track_points(self) -> list[CircuitPoint]:
+        """Return reference-lap coordinates for the local SVG component."""
+        return [
+            {"x": float(point["x"]), "y": float(point["y"])}
+            for point in self.telemetry_track_point_rows
+        ]
+
+    @rx.var
+    def telemetry_track_segments(self) -> list[CircuitSegment]:
+        """Resolve each mini-sector winner to its chart stroke color."""
+        colors = {line["key"]: line["color"] for line in self.telemetry_lines}
+        return [
+            {
+                "start_index": int(segment["start_index"]),
+                "end_index": int(segment["end_index"]),
+                "color": colors.get(str(segment["winner_key"]), "#FFFFFF"),
+            }
+            for segment in self.telemetry_track_segment_rows
+        ]
+
+    @rx.var
+    def telemetry_track_corners(self) -> list[CircuitCorner]:
+        """Return rotated track and label coordinates for numbered corners."""
+        return [
+            {
+                "label": str(corner["label"]),
+                "track_x": float(corner["track_x"]),
+                "track_y": float(corner["track_y"]),
+                "label_x": float(corner["label_x"]),
+                "label_y": float(corner["label_y"]),
+            }
+            for corner in self.telemetry_track_corner_rows
+        ]
+
+    @rx.var
     def telemetry_corners(self) -> list[CornerMark]:
         """Return projected corner positions for labels inside each chart."""
         return [
@@ -437,6 +483,9 @@ class EventState(rx.State):
         self.telemetry_laps = []
         self.telemetry_corner_rows = []
         self.telemetry_sector_rows = []
+        self.telemetry_track_point_rows = []
+        self.telemetry_track_segment_rows = []
+        self.telemetry_track_corner_rows = []
         self.telemetry_unavailable = []
         self.telemetry_baseline_key = ""
         self.telemetry_distance_metres = 0
@@ -490,6 +539,9 @@ class EventState(rx.State):
         self.telemetry_laps = data["laps"]
         self.telemetry_corner_rows = data["corners"]
         self.telemetry_sector_rows = data["sectors"]
+        self.telemetry_track_point_rows = data["track_points"]
+        self.telemetry_track_segment_rows = data["track_segments"]
+        self.telemetry_track_corner_rows = data["track_corners"]
         self.telemetry_unavailable = data["unavailable"]
         self.telemetry_baseline_key = data["baseline_key"]
         self.telemetry_distance_metres = data["distance_metres"]
@@ -808,6 +860,10 @@ def event_results() -> rx.Component:
                                         EventState.telemetry_rows,
                                         EventState.telemetry_lines,
                                         EventState.telemetry_axes,
+                                        EventState.telemetry_track_points,
+                                        EventState.telemetry_track_segments,
+                                        EventState.telemetry_track_corners,
+                                        EventState.telemetry_loaded_for,
                                         EventState.telemetry_corners,
                                         EventState.telemetry_sectors,
                                         EventState.telemetry_unavailable,
