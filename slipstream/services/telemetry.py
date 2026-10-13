@@ -33,12 +33,20 @@ class TelemetryCorner(TypedDict):
     lane: int
 
 
+class TelemetrySector(TypedDict):
+    """One sector boundary projected onto the selected baseline lap."""
+
+    label: str
+    distance: int
+
+
 class SessionTelemetry(TypedDict):
     """Six channel series sharing one distance grid."""
 
     rows: list[dict[str, float | int]]
     laps: list[TelemetryLap]
     corners: list[TelemetryCorner]
+    sectors: list[TelemetrySector]
     unavailable: list[str]
     baseline_key: str
     distance_metres: int
@@ -214,7 +222,7 @@ def _corner_distances(session: Session, baseline: _LapSamples) -> list[Telemetry
         letter = corner.get("Letter")
         suffix = "" if pd.isna(letter) else str(letter).strip()
         corners.append(
-            {"label": f"T{int(number)}{suffix}", "distance": distance, "lane": 0}
+            {"label": f"{int(number)}{suffix}", "distance": distance, "lane": 0}
         )
     corners.sort(key=lambda corner: corner["distance"])
     last_by_lane = [-1_000, -1_000, -1_000]
@@ -230,6 +238,25 @@ def _corner_distances(session: Session, baseline: _LapSamples) -> list[Telemetry
         corner["lane"] = lane
         last_by_lane[lane] = corner["distance"]
     return corners
+
+
+def _sector_distances(baseline: _LapSamples) -> list[TelemetrySector]:
+    """Project sector timing boundaries onto the baseline's distance trace."""
+    sectors: list[TelemetrySector] = []
+    for label, field in (("S2", "Sector1SessionTime"), ("S3", "Sector2SessionTime")):
+        boundary = baseline.lap.get(field)
+        if pd.isna(boundary):
+            continue
+        boundary_seconds = float(boundary.total_seconds())
+        if not isfinite(boundary_seconds):
+            continue
+        if not baseline.session_time[0] <= boundary_seconds <= baseline.session_time[-1]:
+            continue
+        distance = int(round(float(np.interp(
+            boundary_seconds, baseline.session_time, baseline.distance
+        ))))
+        sectors.append({"label": label, "distance": distance})
+    return sectors
 
 
 def get_session_telemetry(
@@ -272,6 +299,7 @@ def get_session_telemetry(
             "rows": [],
             "laps": [],
             "corners": [],
+            "sectors": [],
             "unavailable": unavailable,
             "baseline_key": "",
             "distance_metres": 0,
@@ -310,6 +338,7 @@ def get_session_telemetry(
             for lap in available
         ],
         "corners": _corner_distances(session, baseline),
+        "sectors": _sector_distances(baseline),
         "unavailable": unavailable,
         "baseline_key": baseline.key,
         "distance_metres": int(round(length)),
