@@ -31,6 +31,9 @@ from .telemetry import (
     TelemetryCorner,
     TelemetryLap,
     TelemetrySector,
+    TelemetryTrackCorner,
+    TelemetryTrackPoint,
+    TelemetryTrackSegment,
     get_session_telemetry,
 )
 
@@ -49,6 +52,9 @@ __all__: list[str] = [
     "TelemetryCorner",
     "TelemetryLap",
     "TelemetrySector",
+    "TelemetryTrackCorner",
+    "TelemetryTrackPoint",
+    "TelemetryTrackSegment",
     "TrackSessionDetails",
     "get_available_seasons",
     "get_completed_races",
