@@ -198,7 +198,7 @@ def _telemetry_chart(
                 "angle": -90,
                 "position": "insideLeft",
                 "fill": rx.color("gray", 10),
-                "fontSize": 11,
+                "fontSize": 12,
             },
             **axis_props,
         ),
