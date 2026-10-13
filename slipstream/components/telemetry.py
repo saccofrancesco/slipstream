@@ -1,6 +1,6 @@
 """Six synchronized distance charts for selected FastF1 laps."""
 
-from math import floor
+from math import ceil, floor
 from typing import TypedDict
 
 import reflex as rx
@@ -79,6 +79,20 @@ def _stepped_axis(values: list[float], first: int, step: int) -> TelemetryAxis:
     }
 
 
+def _rpm_axis(values: list[float]) -> TelemetryAxis:
+    """Show only 2000-RPM markers reached within the plotted range."""
+    if not values:
+        return {"domain": [0.0, 1.0], "ticks": []}
+    low, high = min(values), max(values)
+    first_tick = max(2000, ceil(low / 2000) * 2000)
+    last_tick = floor(high / 2000) * 2000
+    domain = [low, high] if low != high else [low - 1000, high + 1000]
+    return {
+        "domain": domain,
+        "ticks": [float(value) for value in range(first_tick, last_tick + 1, 2000)],
+    }
+
+
 def build_telemetry_axes(
     rows: list[dict[str, float | int]], lines: list[TelemetryLine]
 ) -> dict[str, TelemetryAxis]:
@@ -101,7 +115,7 @@ def build_telemetry_axes(
         },
         "throttle": {"domain": [0.0, 100.0], "ticks": [20.0, 60.0, 100.0]},
         "brake": {"domain": [0.0, 1.0], "ticks": [0.0, 1.0]},
-        "rpm": _stepped_axis(rpm, 2000, 2000),
+        "rpm": _rpm_axis(rpm),
         "gear": {
             "domain": [0.0, 8.0],
             "ticks": [1.0, 3.0, 5.0, 7.0] if 1.0 in gear else [2.0, 4.0, 6.0, 8.0],
