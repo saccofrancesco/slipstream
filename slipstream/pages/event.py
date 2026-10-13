@@ -207,6 +207,14 @@ class EventState(rx.State):
         laps_by_driver_and_number: dict[tuple[str, int], LapPoint] = {
             (lap["driver"], lap["number"]): lap for lap in self.lap_points
         }
+        fastest_laps: dict[str, LapPoint] = {}
+        for lap in self.lap_points:
+            current = fastest_laps.get(lap["driver"])
+            if current is None or (lap["seconds"], lap["number"]) < (
+                current["seconds"],
+                current["number"],
+            ):
+                fastest_laps[lap["driver"]] = lap
         selected_lap_keys: set[tuple[str, int]] = {
             (lap["driver"], lap["number"]) for lap in self.selected_laps
         }
@@ -223,6 +231,7 @@ class EventState(rx.State):
                             "tyre_icon": "",
                             "tyre_alt": "No timed lap",
                             "has_lap": False,
+                            "fastest": False,
                             "selected": False,
                         }
                     )
@@ -241,6 +250,7 @@ class EventState(rx.State):
                             else "Unknown tyre compound"
                         ),
                         "has_lap": True,
+                        "fastest": lap_number == fastest_laps[code]["number"],
                         "selected": (code, lap_number) in selected_lap_keys,
                     }
                 )
