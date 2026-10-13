@@ -1,7 +1,7 @@
 .trackmap {
   display: block;
   width: 100%;
-  height: clamp(15rem, 38vw, 30rem);
+  height: clamp(11rem, 30vw, 24rem);
   overflow: visible;
 }
 

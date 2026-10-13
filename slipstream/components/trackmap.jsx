@@ -12,6 +12,99 @@ function pathFromPoints(points) {
     .join(" ");
 }
 
+function cross(origin, first, second) {
+  return (
+    (first.x - origin.x) * (second.y - origin.y) -
+    (first.y - origin.y) * (second.x - origin.x)
+  );
+}
+
+function convexHull(points) {
+  const sorted = [...points].sort((first, second) =>
+    first.x === second.x ? first.y - second.y : first.x - second.x,
+  );
+  if (sorted.length < 3) return sorted;
+
+  const lower = [];
+  for (const point of sorted) {
+    while (
+      lower.length >= 2 &&
+      cross(lower[lower.length - 2], lower[lower.length - 1], point) <= 0
+    ) {
+      lower.pop();
+    }
+    lower.push(point);
+  }
+
+  const upper = [];
+  for (const point of [...sorted].reverse()) {
+    while (
+      upper.length >= 2 &&
+      cross(upper[upper.length - 2], upper[upper.length - 1], point) <= 0
+    ) {
+      upper.pop();
+    }
+    upper.push(point);
+  }
+  lower.pop();
+  upper.pop();
+  return [...lower, ...upper];
+}
+
+function minimumHeightRotation(points) {
+  // A minimum-width hull orientation makes the circuit occupy less SVG height.
+  const hull = convexHull(points);
+  if (hull.length < 2) return 0;
+
+  let bestAngle = 0;
+  let smallestHeight = Infinity;
+  let widestTie = -Infinity;
+  for (let index = 0; index < hull.length; index += 1) {
+    const first = hull[index];
+    const second = hull[(index + 1) % hull.length];
+    const angle = Math.atan2(second.y - first.y, second.x - first.x);
+    const cosine = Math.cos(angle);
+    const sine = Math.sin(angle);
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const point of hull) {
+      const x = point.x * cosine + point.y * sine;
+      const y = -point.x * sine + point.y * cosine;
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    }
+
+    const height = maxY - minY;
+    const width = maxX - minX;
+    const tieTolerance = Number.isFinite(smallestHeight)
+      ? Math.max(1, smallestHeight) * 1e-8
+      : 0;
+    if (
+      !Number.isFinite(smallestHeight) ||
+      height < smallestHeight - tieTolerance ||
+      (Math.abs(height - smallestHeight) <= tieTolerance && width > widestTie)
+    ) {
+      bestAngle = angle;
+      smallestHeight = height;
+      widestTie = width;
+    }
+  }
+  return bestAngle;
+}
+
+function rotatePoint(point, angle) {
+  const cosine = Math.cos(angle);
+  const sine = Math.sin(angle);
+  return {
+    x: point.x * cosine + point.y * sine,
+    y: -point.x * sine + point.y * cosine,
+  };
+}
+
 export function Trackmap({
   points = [],
   segments = [],
@@ -19,20 +112,39 @@ export function Trackmap({
   animationKey = "",
   durationMs = 2200,
 }) {
-  const displayPoints = points.map((point) => ({
+  const sourcePoints = points.map((point) => ({
     x: finiteNumber(point.x),
     y: -finiteNumber(point.y),
   }));
 
-  if (displayPoints.length < 2) return null;
+  if (sourcePoints.length < 2) return null;
 
-  const displayCorners = corners.map((corner) => ({
+  const sourceCorners = corners.map((corner) => ({
     label: String(corner.label ?? ""),
     trackX: finiteNumber(corner.track_x ?? corner.trackX),
     trackY: -finiteNumber(corner.track_y ?? corner.trackY),
     labelX: finiteNumber(corner.label_x ?? corner.labelX),
     labelY: -finiteNumber(corner.label_y ?? corner.labelY),
   }));
+  const rotation = minimumHeightRotation([
+    ...sourcePoints,
+    ...sourceCorners.flatMap((corner) => [
+      { x: corner.trackX, y: corner.trackY },
+      { x: corner.labelX, y: corner.labelY },
+    ]),
+  ]);
+  const displayPoints = sourcePoints.map((point) => rotatePoint(point, rotation));
+  const displayCorners = sourceCorners.map((corner) => {
+    const track = rotatePoint({ x: corner.trackX, y: corner.trackY }, rotation);
+    const label = rotatePoint({ x: corner.labelX, y: corner.labelY }, rotation);
+    return {
+      ...corner,
+      trackX: track.x,
+      trackY: track.y,
+      labelX: label.x,
+      labelY: label.y,
+    };
+  });
   const boundsX = [
     ...displayPoints.map((point) => point.x),
     ...displayCorners.flatMap((corner) => [corner.trackX, corner.labelX]),
