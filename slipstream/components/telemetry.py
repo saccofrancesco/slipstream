@@ -40,7 +40,6 @@ class CornerMark(TypedDict):
 
     label: str
     distance: int
-    lane: int
 
 
 class SectorMark(TypedDict):
@@ -116,19 +115,14 @@ def _chart_line(line: rx.Var[TelemetryLine], metric: str) -> rx.Component:
 
 
 def _corner_line(corner: rx.Var[CornerMark]) -> rx.Component:
-    """Show a faint distance guide and stagger its label at the plot floor."""
-    label_offset = rx.cond(
-        corner["lane"] == 0,
-        4,
-        rx.cond(corner["lane"] == 1, 17, 30),
-    )
+    """Show a faint distance guide and its label along the plot bottom."""
     return rx.recharts.reference_line(
         rx.recharts.label(
             value=corner["label"],
             position="insideBottom",
-            offset=label_offset,
+            offset=5,
             fill=rx.color("gray", 11),
-            font_size=10,
+            font_size=8,
             font_weight=600,
         ),
         x=corner["distance"],
@@ -147,7 +141,7 @@ def _sector_line(sector: rx.Var[SectorMark]) -> rx.Component:
             position="insideTop",
             offset=5,
             fill=rx.color("gray", 11),
-            font_size=10,
+            font_size=8,
         ),
         x=sector["distance"],
         stroke=rx.color("gray", 8),
