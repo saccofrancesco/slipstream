@@ -40,6 +40,15 @@ class TyrePointLine(TypedDict):
     line_color: str
 
 
+class LapChartAxis(TypedDict):
+    """Vertical range and labels for the selected drivers' visible laps."""
+
+    domain: list[float]
+    ticks: list[float]
+    precision: int
+    width: int
+
+
 class LapStripCell(TypedDict):
     """One driver's display data for a single lap in the lap strip."""
 
@@ -333,15 +342,41 @@ def _driver_chip(chip: rx.Var[DriverChip], on_toggle: rx.EventHandler) -> rx.Com
     )
 
 
-def _lap_time_formatter() -> FunctionStringVar:
-    """Return whole-second labels for the numeric lap-time axis."""
+def _lap_time_formatter(precision: int) -> FunctionStringVar:
+    """Format lap-time ticks with the precision needed by the visible range."""
     return FunctionStringVar(
         _js_expr=(
-            '(value) => { const totalSeconds = Math.floor(Number(value)); '
-            'const minutes = Math.floor(totalSeconds / 60); '
-            'const seconds = String(totalSeconds % 60).padStart(2, "0"); '
-            'return `${minutes}:${seconds}`; }'
+            f"(value) => {{ const precision = {precision}; "
+            "const scale = 10 ** precision; "
+            "const units = precision === 0 "
+            "? Math.floor(Number(value)) : Math.round(Number(value) * scale); "
+            "const minutes = Math.floor(units / (60 * scale)); "
+            "const seconds = (units - minutes * 60 * scale) / scale; "
+            "return `${minutes}:${seconds.toFixed(precision).padStart("
+            "precision === 0 ? 2 : precision + 3, '0')}`; }"
         )
+    )
+
+
+def _lap_y_axis(axis: rx.Var[LapChartAxis], precision: int) -> rx.Component:
+    """Render the same fitted axis with one valid tick formatter."""
+    return rx.recharts.y_axis(
+        type_="number",
+        domain=axis["domain"],
+        tick_formatter=_lap_time_formatter(precision),
+        allow_data_overflow=True,
+        padding={"top": 8, "bottom": 8},
+        custom_attrs={"niceTicks": "none", "ticks": axis["ticks"]},
+        axis_line=False,
+        tick_line=False,
+        width=axis["width"],
+        stroke=rx.color("gray", 10),
+        label={
+            "value": "LAP TIME",
+            "angle": -90,
+            "position": "insideLeft",
+            "fill": rx.color("gray", 10),
+        },
     )
 
 
@@ -426,6 +461,7 @@ def laps_section(
     chips: rx.Var[list[DriverChip]],
     on_toggle_driver: rx.EventHandler,
     chart_data: rx.Var[list[dict[str, float | int | None]]],
+    chart_y_axis: rx.Var[LapChartAxis],
     driver_lines: rx.Var[list[DriverLine]],
     tyre_point_lines: rx.Var[list[TyrePointLine]],
     strip_lap_numbers: rx.Var[list[int]],
@@ -439,7 +475,6 @@ def laps_section(
     error: rx.Var[str],
 ) -> rx.Component:
     """Render the selected session's controls and interactive lap chart."""
-    time_formatter = _lap_time_formatter()
     tooltip_formatter = _lap_tooltip_formatter()
     tooltip_lap_formatter = rx.Var(_js_expr='(value) => `Lap ${value}`')
 
@@ -525,21 +560,18 @@ def laps_section(
                                             "fill": rx.color("gray", 10),
                                         },
                                     ),
-                                    rx.recharts.y_axis(
-                                        type_="number",
-                                        domain=["auto", "auto"],
-                                        tick_count=5,
-                                        tick_formatter=time_formatter,
-                                        axis_line=False,
-                                        tick_line=False,
-                                        width=64,
-                                        stroke=rx.color("gray", 10),
-                                        label={
-                                            "value": "LAP TIME",
-                                            "angle": -90,
-                                            "position": "insideLeft",
-                                            "fill": rx.color("gray", 10),
-                                        },
+                                    rx.cond(
+                                        chart_y_axis["precision"] == 0,
+                                        _lap_y_axis(chart_y_axis, 0),
+                                        rx.cond(
+                                            chart_y_axis["precision"] == 1,
+                                            _lap_y_axis(chart_y_axis, 1),
+                                            rx.cond(
+                                                chart_y_axis["precision"] == 2,
+                                                _lap_y_axis(chart_y_axis, 2),
+                                                _lap_y_axis(chart_y_axis, 3),
+                                            ),
+                                        ),
                                     ),
                                     rx.recharts.graphing_tooltip(
                                         cursor={
