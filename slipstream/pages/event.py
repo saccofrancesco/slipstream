@@ -22,7 +22,9 @@ from slipstream.components.laps import (
 from slipstream.components.telemetry import (
     CornerMark,
     SectorMark,
+    TelemetryAxis,
     TelemetryLine,
+    build_telemetry_axes,
     telemetry_section,
 )
 from slipstream.components.weekend import event_header
@@ -399,6 +401,11 @@ class EventState(rx.State):
                 }
             )
         return lines
+
+    @rx.var
+    def telemetry_axes(self) -> dict[str, TelemetryAxis]:
+        """Derive exact y-axis ticks from the loaded laps' telemetry."""
+        return build_telemetry_axes(self.telemetry_rows, self.telemetry_lines)
 
     @rx.var
     def telemetry_corners(self) -> list[CornerMark]:
@@ -800,6 +807,7 @@ def event_results() -> rx.Component:
                                     telemetry_section(
                                         EventState.telemetry_rows,
                                         EventState.telemetry_lines,
+                                        EventState.telemetry_axes,
                                         EventState.telemetry_corners,
                                         EventState.telemetry_sectors,
                                         EventState.telemetry_unavailable,
