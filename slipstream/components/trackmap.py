@@ -34,6 +34,17 @@ class TrackmapCorner(TypedDict):
     label_y: float
 
 
+class TrackmapPlaybackLap(TypedDict):
+    """One selected lap's presentation and elapsed-time track samples."""
+
+    key: str
+    label: str
+    color: str
+    baseline: bool
+    duration: float
+    elapsed: list[float]
+
+
 class Trackmap(rx.Component):
     """Render a responsive local SVG component without an npm dependency."""
 
@@ -56,7 +67,24 @@ class TelemetryTrackSync(Trackmap):
     """Keep the track position marker synchronized with chart hover locally."""
 
     tag: str = "TelemetryTrackSync"
+    playback_laps: rx.Var[list[TrackmapPlaybackLap]]
+    playback_key: rx.Var[str]
+    distance_metres: rx.Var[float]
+
+
+# Reflex validates Recharts children by Python class name; the local tag below
+# selects the context-aware React wrapper instead of Recharts' static component.
+class ReferenceLine(rx.Component):
+    """Render the local playback playhead inside a Recharts chart."""
+
+    library: str = f"$/public{_TRACKMAP_PATH}"
+    tag: str = "TelemetryPlaybackLine"
+    distance_metres: rx.Var[float]
+
+
+TelemetryPlaybackLine = ReferenceLine
 
 
 trackmap = Trackmap.create
 telemetry_track_sync = TelemetryTrackSync.create
+telemetry_playback_line = TelemetryPlaybackLine.create
