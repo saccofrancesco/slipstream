@@ -8,8 +8,10 @@ import reflex as rx
 from .layout import loading_card, status_card
 from .trackmap import (
     TrackmapCorner,
+    TrackmapPlaybackLap,
     TrackmapPoint,
     TrackmapSegment,
+    telemetry_playback_line,
     telemetry_track_sync,
 )
 
@@ -240,6 +242,7 @@ def _telemetry_chart(
     axis: rx.Var[TelemetryAxis],
     corners: rx.Var[list[CornerMark]],
     sectors: rx.Var[list[SectorMark]],
+    distance_metres: rx.Var[float],
     last: bool = False,
 ) -> rx.Component:
     """Build one channel with the same x scale and synchronized cursor."""
@@ -296,6 +299,7 @@ def _telemetry_chart(
             metric == "delta",
             rx.recharts.reference_line(y=0, stroke=rx.color("gray", 9)),
         ),
+        telemetry_playback_line(distance_metres=distance_metres),
         rx.recharts.graphing_tooltip(
             cursor={
                 "stroke": "rgba(255,255,255,0.65)",
@@ -344,6 +348,9 @@ def telemetry_section(
     track_points: rx.Var[list[TrackmapPoint]],
     track_segments: rx.Var[list[TrackmapSegment]],
     track_corners: rx.Var[list[TrackmapCorner]],
+    playback_laps: rx.Var[list[TrackmapPlaybackLap]],
+    playback_key: rx.Var[str],
+    distance_metres: rx.Var[float],
     preserve_orientation: rx.Var[bool],
     animation_key: rx.Var[str],
     corners: rx.Var[list[CornerMark]],
@@ -442,6 +449,7 @@ def telemetry_section(
                                     axes["speed"],
                                     corners,
                                     sectors,
+                                    distance_metres,
                                 ),
                                 _telemetry_chart(
                                     "delta",
@@ -451,6 +459,7 @@ def telemetry_section(
                                     axes["delta"],
                                     corners,
                                     sectors,
+                                    distance_metres,
                                 ),
                                 _telemetry_chart(
                                     "throttle",
@@ -460,6 +469,7 @@ def telemetry_section(
                                     axes["throttle"],
                                     corners,
                                     sectors,
+                                    distance_metres,
                                 ),
                                 _telemetry_chart(
                                     "brake",
@@ -469,6 +479,7 @@ def telemetry_section(
                                     axes["brake"],
                                     corners,
                                     sectors,
+                                    distance_metres,
                                 ),
                                 _telemetry_chart(
                                     "rpm",
@@ -478,6 +489,7 @@ def telemetry_section(
                                     axes["rpm"],
                                     corners,
                                     sectors,
+                                    distance_metres,
                                 ),
                                 _telemetry_chart(
                                     "gear",
@@ -487,6 +499,7 @@ def telemetry_section(
                                     axes["gear"],
                                     corners,
                                     sectors,
+                                    distance_metres,
                                     last=True,
                                 ),
                                 width="100%",
@@ -503,6 +516,9 @@ def telemetry_section(
                         points=track_points,
                         segments=track_segments,
                         corners=track_corners,
+                        playback_laps=playback_laps,
+                        playback_key=playback_key,
+                        distance_metres=distance_metres,
                         preserve_orientation=preserve_orientation,
                         animation_key=animation_key,
                         duration_ms=2200,
