@@ -112,6 +112,7 @@ export function Trackmap({
   preserveOrientation = false,
   animationKey = "",
   durationMs = 2200,
+  activePointIndex = 0,
 }) {
   const sourcePoints = points.map((point) => ({
     x: finiteNumber(point.x),
@@ -172,6 +173,12 @@ export function Trackmap({
   const colorWidth = scale * 0.011;
   const markerRadius = scale * 0.014;
   const markerFontSize = scale * 0.016;
+  const positionMarkerRadius = scale * 0.012;
+  const positionMarkerIndex = Math.min(
+    displayPoints.length - 1,
+    Math.max(0, Math.round(finiteNumber(activePointIndex))),
+  );
+  const positionMarker = displayPoints[positionMarkerIndex];
   const totalDuration = Math.max(finiteNumber(durationMs, 2200), 0);
   const whiteDuration = totalDuration * 0.55;
   const colorDuration = totalDuration * 0.38;
@@ -254,7 +261,80 @@ export function Trackmap({
             </g>
           ))}
         </g>
+
+        <circle
+          className="trackmap__position-marker"
+          cx={positionMarker.x}
+          cy={positionMarker.y}
+          r={positionMarkerRadius}
+          fill="white"
+          stroke="var(--gray-2)"
+          strokeWidth={scale * 0.004}
+          aria-hidden="true"
+        />
       </g>
     </svg>
+  );
+}
+
+function chartPlotBounds(chart) {
+  const gridLine = chart.querySelector(
+    ".recharts-cartesian-grid-horizontal line",
+  );
+  const gridBounds = gridLine?.getBoundingClientRect();
+  if (gridBounds && gridBounds.width > 0) return gridBounds;
+
+  const surfaceBounds = chart
+    .querySelector(".recharts-surface")
+    ?.getBoundingClientRect();
+  return surfaceBounds?.width > 0 ? surfaceBounds : chart.getBoundingClientRect();
+}
+
+export function TelemetryTrackSync({
+  points = [],
+  segments = [],
+  corners = [],
+  preserveOrientation = false,
+  animationKey = "",
+  durationMs = 2200,
+  children,
+}) {
+  const [activePointIndex, setActivePointIndex] = React.useState(0);
+
+  React.useEffect(() => {
+    // A newly loaded lap always starts with the marker on the finish line.
+    setActivePointIndex(0);
+  }, [animationKey, points.length]);
+
+  function handleMouseMove(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    const chart = target?.closest(".recharts-wrapper");
+    if (!chart || !event.currentTarget.contains(chart) || points.length < 2) return;
+
+    const bounds = chartPlotBounds(chart);
+    if (bounds.width <= 0) return;
+    const progress = Math.min(
+      1,
+      Math.max(0, (event.clientX - bounds.left) / bounds.width),
+    );
+    const nextIndex = Math.round(progress * (points.length - 1));
+    setActivePointIndex((currentIndex) =>
+      currentIndex === nextIndex ? currentIndex : nextIndex,
+    );
+  }
+
+  return (
+    <div className="telemetry-track-sync" onMouseMove={handleMouseMove}>
+      <Trackmap
+        points={points}
+        segments={segments}
+        corners={corners}
+        preserveOrientation={preserveOrientation}
+        animationKey={animationKey}
+        durationMs={durationMs}
+        activePointIndex={activePointIndex}
+      />
+      {children}
+    </div>
   );
 }

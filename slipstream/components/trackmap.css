@@ -7,6 +7,14 @@
   overflow: visible;
 }
 
+.telemetry-track-sync {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  gap: 1.5rem;
+}
+
 .trackmap__white-path,
 .trackmap__colored-path {
   stroke-dasharray: 1;
@@ -26,6 +34,10 @@
 .trackmap__corners {
   opacity: 0;
   animation: trackmap-corners 320ms ease-out var(--trackmap-corner-delay) forwards;
+}
+
+.trackmap__position-marker {
+  pointer-events: none;
 }
 
 @keyframes trackmap-draw-white {
