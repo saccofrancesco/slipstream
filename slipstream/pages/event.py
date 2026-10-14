@@ -134,6 +134,7 @@ class EventState(rx.State):
     telemetry_track_point_rows: list[TelemetryTrackPoint] = []
     telemetry_track_segment_rows: list[TelemetryTrackSegment] = []
     telemetry_track_corner_rows: list[TelemetryTrackCorner] = []
+    telemetry_preserve_orientation: bool = False
     telemetry_unavailable: list[str] = []
     telemetry_baseline_key: str = ""
     telemetry_distance_metres: int = 0
@@ -509,6 +510,7 @@ class EventState(rx.State):
         self.telemetry_track_point_rows = []
         self.telemetry_track_segment_rows = []
         self.telemetry_track_corner_rows = []
+        self.telemetry_preserve_orientation = False
         self.telemetry_unavailable = []
         self.telemetry_baseline_key = ""
         self.telemetry_distance_metres = 0
@@ -567,6 +569,7 @@ class EventState(rx.State):
         self.telemetry_track_point_rows = data["track_points"]
         self.telemetry_track_segment_rows = data["track_segments"]
         self.telemetry_track_corner_rows = data["track_corners"]
+        self.telemetry_preserve_orientation = data["preserve_orientation"]
         self.telemetry_unavailable = data["unavailable"]
         self.telemetry_baseline_key = data["baseline_key"]
         self.telemetry_distance_metres = data["distance_metres"]
@@ -900,6 +903,7 @@ def event_results() -> rx.Component:
                                         EventState.telemetry_track_points,
                                         EventState.telemetry_track_segments,
                                         EventState.telemetry_track_corners,
+                                        EventState.telemetry_preserve_orientation,
                                         EventState.telemetry_animation_key,
                                         EventState.telemetry_corners,
                                         EventState.telemetry_sectors,
