@@ -4,7 +4,7 @@ import { ReferenceLine } from "recharts";
 const PlaybackContext = React.createContext({
   enabled: false,
   currentTime: 0,
-  progress: 0,
+  distance: 0,
 });
 
 export function TelemetryPlaybackLine({ distanceMetres = 0 }) {
@@ -13,7 +13,10 @@ export function TelemetryPlaybackLine({ distanceMetres = 0 }) {
 
   return (
     <ReferenceLine
-      x={playback.progress * finiteNumber(distanceMetres)}
+      x={Math.min(
+        finiteNumber(distanceMetres),
+        Math.max(0, finiteNumber(playback.distance)),
+      )}
       stroke="var(--accent-9)"
       strokeWidth={2}
       zIndex={500}
@@ -141,6 +144,7 @@ export function Trackmap({
     const sourcePoints = points.map((point) => ({
       x: finiteNumber(point.x),
       y: -finiteNumber(point.y),
+      distance: finiteNumber(point.distance),
     }));
     if (sourcePoints.length < 2) return null;
 
@@ -160,9 +164,10 @@ export function Trackmap({
             { x: corner.labelX, y: corner.labelY },
           ]),
         ]);
-    const displayPoints = sourcePoints.map((point) =>
-      rotatePoint(point, rotation),
-    );
+    const displayPoints = sourcePoints.map((point) => ({
+      ...rotatePoint(point, rotation),
+      distance: point.distance,
+    }));
     const displayCorners = sourceCorners.map((corner) => {
       const track = rotatePoint({ x: corner.trackX, y: corner.trackY }, rotation);
       const label = rotatePoint({ x: corner.labelX, y: corner.labelY }, rotation);
@@ -332,7 +337,7 @@ export function Trackmap({
   );
 }
 
-function lapPointAtTime(lap, points, currentTime) {
+function lapPositionAtTime(lap, points, currentTime) {
   const elapsed = lap.elapsed;
   if (currentTime <= 0) return points[0];
   if (currentTime >= lap.duration) return points[points.length - 1];
@@ -360,6 +365,9 @@ function lapPointAtTime(lap, points, currentTime) {
   return {
     x: first.x + (second.x - first.x) * fraction,
     y: first.y + (second.y - first.y) * fraction,
+    distance:
+      finiteNumber(first.distance) +
+      (finiteNumber(second.distance) - finiteNumber(first.distance)) * fraction,
   };
 }
 
@@ -386,16 +394,14 @@ function TrackmapPlaybackDots({ points, playbackLaps, scale }) {
   return (
     <g className="trackmap__playback-dots" aria-label="Lap playback positions">
       {playbackLaps.map((lap) => {
-        const point = lapPointAtTime(lap, points, playback.currentTime);
+        const point = lapPositionAtTime(lap, points, playback.currentTime);
         return (
           <circle
             key={lap.key}
             cx={point.x}
             cy={point.y}
-            r={scale * (lap.baseline ? 0.015 : 0.013)}
+            r={scale * 0.018}
             fill={lap.color || "white"}
-            stroke="var(--gray-2)"
-            strokeWidth={scale * 0.004}
             className="trackmap__playback-dot"
           >
             <title>{lap.label}</title>
@@ -464,13 +470,21 @@ export function TelemetryTrackSync({
   const playbackProgress = playbackEnabled
     ? Math.min(1, Math.max(0, currentTime / totalDuration))
     : 0;
+  const playbackReferenceLap = playbackEnabled
+    ? usablePlaybackLaps.reduce((slowestLap, lap) =>
+        Number(lap.duration) > Number(slowestLap.duration) ? lap : slowestLap,
+      )
+    : null;
+  const playbackDistance = playbackReferenceLap
+    ? lapPositionAtTime(playbackReferenceLap, points, currentTime).distance
+    : 0;
   const playbackContext = React.useMemo(
     () => ({
       enabled: playbackEnabled,
       currentTime,
-      progress: playbackProgress,
+      distance: playbackDistance,
     }),
-    [playbackEnabled, currentTime, playbackProgress],
+    [playbackEnabled, currentTime, playbackDistance],
   );
 
   React.useEffect(() => {
