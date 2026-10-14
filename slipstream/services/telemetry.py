@@ -75,6 +75,7 @@ class SessionTelemetry(TypedDict):
     track_points: list[TelemetryTrackPoint]
     track_segments: list[TelemetryTrackSegment]
     track_corners: list[TelemetryTrackCorner]
+    preserve_orientation: bool
     unavailable: list[str]
     baseline_key: str
     distance_metres: int
@@ -263,14 +264,15 @@ def _track_geometry(
     list[TelemetryTrackPoint],
     list[TelemetryTrackSegment],
     list[TelemetryTrackCorner],
+    bool,
 ]:
     """Build the reference trace, local-time winners, and optional corner labels."""
     try:
         position = baseline.lap.get_pos_data(interpolate_edges=True)
     except Exception:
-        return [], [], []
+        return [], [], [], False
     if position.empty:
-        return [], [], []
+        return [], [], [], False
 
     position_times = position["SessionTime"].dt.total_seconds().to_numpy(dtype=float)
     position_x, position_y = _numeric(position["X"]), _numeric(position["Y"])
@@ -280,7 +282,7 @@ def _track_geometry(
         & np.isfinite(position_y)
     )
     if valid.sum() < 2:
-        return [], [], []
+        return [], [], [], False
     position_times = position_times[valid]
     position_x = position_x[valid]
     position_y = position_y[valid]
@@ -293,10 +295,12 @@ def _track_geometry(
 
     circuit_info = None
     rotation = 0.0
+    preserve_orientation = False
     try:
         circuit_info = session.get_circuit_info()
         if circuit_info is not None and isfinite(float(circuit_info.rotation)):
             rotation = float(circuit_info.rotation)
+            preserve_orientation = True
     except Exception:
         # Position data is still useful when the optional circuit metadata fails.
         circuit_info = None
@@ -338,7 +342,12 @@ def _track_geometry(
                 }
             )
 
-    return points, _mini_sector_segments(grid, available, sampled), corners
+    return (
+        points,
+        _mini_sector_segments(grid, available, sampled),
+        corners,
+        preserve_orientation,
+    )
 
 
 def _corner_distances(session: Session, baseline: _LapSamples) -> list[TelemetryCorner]:
@@ -447,6 +456,7 @@ def get_session_telemetry(
             "track_points": [],
             "track_segments": [],
             "track_corners": [],
+            "preserve_orientation": False,
             "unavailable": unavailable,
             "baseline_key": "",
             "distance_metres": 0,
@@ -456,7 +466,12 @@ def get_session_telemetry(
     length = float(baseline.distance[-1])
     grid = np.append(np.arange(0, length, SAMPLE_SPACING_METRES), length)
     sampled = {lap.key: _resample(lap, grid, length) for lap in available}
-    track_points, track_segments, track_corners = _track_geometry(
+    (
+        track_points,
+        track_segments,
+        track_corners,
+        preserve_orientation,
+    ) = _track_geometry(
         session, baseline, grid, available, sampled
     )
     baseline_elapsed = sampled[baseline.key]["elapsed"]
@@ -492,6 +507,7 @@ def get_session_telemetry(
         "track_points": track_points,
         "track_segments": track_segments,
         "track_corners": track_corners,
+        "preserve_orientation": preserve_orientation,
         "unavailable": unavailable,
         "baseline_key": baseline.key,
         "distance_metres": int(round(length)),
