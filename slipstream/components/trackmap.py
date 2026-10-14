@@ -43,6 +43,7 @@ class Trackmap(rx.Component):
     points: rx.Var[list[TrackmapPoint]]
     segments: rx.Var[list[TrackmapSegment]]
     corners: rx.Var[list[TrackmapCorner]]
+    preserve_orientation: rx.Var[bool] = rx.Var.create(False)
     animation_key: rx.Var[str]
     duration_ms: rx.Var[int] = rx.Var.create(2200)
 
