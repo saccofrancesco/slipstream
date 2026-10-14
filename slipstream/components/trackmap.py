@@ -52,4 +52,11 @@ class Trackmap(rx.Component):
         return {"": f"$/public{_TRACKMAP_CSS_PATH}"}
 
 
+class TelemetryTrackSync(Trackmap):
+    """Keep the track position marker synchronized with chart hover locally."""
+
+    tag: str = "TelemetryTrackSync"
+
+
 trackmap = Trackmap.create
+telemetry_track_sync = TelemetryTrackSync.create
