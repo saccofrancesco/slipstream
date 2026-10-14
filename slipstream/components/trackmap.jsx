@@ -226,14 +226,6 @@ export function Trackmap({
         <g className="trackmap__corners" aria-hidden="true">
           {displayCorners.map((corner, index) => (
             <g key={`${corner.label}-${index}`}>
-              <line
-                x1={corner.trackX}
-                y1={corner.trackY}
-                x2={corner.labelX}
-                y2={corner.labelY}
-                stroke="var(--gray-9)"
-                strokeWidth={scale * 0.0018}
-              />
               <circle
                 cx={corner.labelX}
                 cy={corner.labelY}
