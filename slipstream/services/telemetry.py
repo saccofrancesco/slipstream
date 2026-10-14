@@ -18,12 +18,13 @@ _SESSION_LOCK: Lock = Lock()
 
 
 class TelemetryLap(TypedDict):
-    """Identity and official timing for one plotted lap."""
+    """Identity, official timing, and distance-aligned elapsed samples."""
 
     key: str
     driver: str
     number: int
     seconds: float
+    elapsed: list[float]
 
 
 class TelemetryCorner(TypedDict):
@@ -78,7 +79,7 @@ class SessionTelemetry(TypedDict):
     preserve_orientation: bool
     unavailable: list[str]
     baseline_key: str
-    distance_metres: int
+    distance_metres: float
 
 
 @dataclass
@@ -499,6 +500,9 @@ def get_session_telemetry(
                 "driver": lap.driver,
                 "number": lap.number,
                 "seconds": lap.seconds,
+                "elapsed": [
+                    round(float(value), 4) for value in sampled[lap.key]["elapsed"]
+                ],
             }
             for lap in available
         ],
@@ -510,5 +514,5 @@ def get_session_telemetry(
         "preserve_orientation": preserve_orientation,
         "unavailable": unavailable,
         "baseline_key": baseline.key,
-        "distance_metres": int(round(length)),
+        "distance_metres": round(length, 2),
     }
