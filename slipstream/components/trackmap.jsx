@@ -109,6 +109,7 @@ export function Trackmap({
   points = [],
   segments = [],
   corners = [],
+  preserveOrientation = false,
   animationKey = "",
   durationMs = 2200,
 }) {
@@ -126,13 +127,15 @@ export function Trackmap({
     labelX: finiteNumber(corner.label_x ?? corner.labelX),
     labelY: -finiteNumber(corner.label_y ?? corner.labelY),
   }));
-  const rotation = minimumHeightRotation([
-    ...sourcePoints,
-    ...sourceCorners.flatMap((corner) => [
-      { x: corner.trackX, y: corner.trackY },
-      { x: corner.labelX, y: corner.labelY },
-    ]),
-  ]);
+  const rotation = preserveOrientation
+    ? 0
+    : minimumHeightRotation([
+        ...sourcePoints,
+        ...sourceCorners.flatMap((corner) => [
+          { x: corner.trackX, y: corner.trackY },
+          { x: corner.labelX, y: corner.labelY },
+        ]),
+      ]);
   const displayPoints = sourcePoints.map((point) => rotatePoint(point, rotation));
   const displayCorners = sourceCorners.map((corner) => {
     const track = rotatePoint({ x: corner.trackX, y: corner.trackY }, rotation);
@@ -161,7 +164,9 @@ export function Trackmap({
   const height = Math.max(maxY - minY, 1);
   const scale = Math.max(width, height);
   const padding = scale * 0.055;
-  const viewBox = `${minX - padding} ${minY - padding} ${width + padding * 2} ${height + padding * 2}`;
+  const viewBoxWidth = width + padding * 2;
+  const viewBoxHeight = height + padding * 2;
+  const viewBox = `${minX - padding} ${minY - padding} ${viewBoxWidth} ${viewBoxHeight}`;
   const fullPath = pathFromPoints(displayPoints);
   const outlineWidth = scale * 0.018;
   const colorWidth = scale * 0.011;
@@ -184,6 +189,7 @@ export function Trackmap({
         "--trackmap-color-delay": `${whiteDuration}ms`,
         "--trackmap-color-duration": `${colorDuration}ms`,
         "--trackmap-corner-delay": `${cornerDelay}ms`,
+        aspectRatio: `${viewBoxWidth} / ${viewBoxHeight}`,
       }}
     >
       <g key={animationKey}>

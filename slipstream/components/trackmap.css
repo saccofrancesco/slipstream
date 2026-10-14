@@ -1,7 +1,9 @@
 .trackmap {
   display: block;
   width: 100%;
-  height: clamp(11rem, 30vw, 24rem);
+  height: auto;
+  min-height: 11rem;
+  max-height: 30rem;
   overflow: visible;
 }
 
