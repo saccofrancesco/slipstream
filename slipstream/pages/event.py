@@ -29,6 +29,7 @@ from slipstream.components.telemetry import (
 )
 from slipstream.components.trackmap import (
     TrackmapCorner,
+    TrackmapPlaybackLap,
     TrackmapPoint,
     TrackmapSegment,
 )
@@ -137,7 +138,7 @@ class EventState(rx.State):
     telemetry_preserve_orientation: bool = False
     telemetry_unavailable: list[str] = []
     telemetry_baseline_key: str = ""
-    telemetry_distance_metres: int = 0
+    telemetry_distance_metres: float = 0.0
     telemetry_loaded_for: str = ""
     telemetry_animation_iteration: int = 0
     telemetry_loading: bool = False
@@ -419,6 +420,31 @@ class EventState(rx.State):
     def telemetry_axes(self) -> dict[str, TelemetryAxis]:
         """Derive exact y-axis ticks from the loaded laps' telemetry."""
         return build_telemetry_axes(self.telemetry_rows, self.telemetry_lines)
+
+    @rx.var
+    def telemetry_playback_laps(self) -> list[TrackmapPlaybackLap]:
+        """Pair each lap's elapsed samples with its chart color and label."""
+        lines_by_key = {line["key"]: line for line in self.telemetry_lines}
+        point_count = len(self.telemetry_track_point_rows)
+        playback_laps: list[TrackmapPlaybackLap] = []
+        if point_count < 2:
+            return playback_laps
+        for lap in self.telemetry_laps:
+            line = lines_by_key.get(lap["key"])
+            elapsed = lap["elapsed"]
+            if line is None or len(elapsed) != point_count or lap["seconds"] <= 0:
+                continue
+            playback_laps.append(
+                {
+                    "key": lap["key"],
+                    "label": line["label"],
+                    "color": line["color"],
+                    "baseline": line["baseline"],
+                    "duration": float(lap["seconds"]),
+                    "elapsed": elapsed,
+                }
+            )
+        return playback_laps
 
     @rx.var
     def telemetry_track_points(self) -> list[TrackmapPoint]:
@@ -903,6 +929,9 @@ def event_results() -> rx.Component:
                                         EventState.telemetry_track_points,
                                         EventState.telemetry_track_segments,
                                         EventState.telemetry_track_corners,
+                                        EventState.telemetry_playback_laps,
+                                        EventState.telemetry_loaded_for,
+                                        EventState.telemetry_distance_metres,
                                         EventState.telemetry_preserve_orientation,
                                         EventState.telemetry_animation_key,
                                         EventState.telemetry_corners,
