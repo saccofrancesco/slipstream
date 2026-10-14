@@ -352,14 +352,59 @@ def telemetry_section(
     """Render selection states and the six-chart comparison stack."""
     return rx.cond(
         selected_count == 0,
-        rx.vstack(
-            status_card(
-                "No laps selected",
-                "Select lap times in the Laps table to compare telemetry.",
+        rx.card(
+            rx.vstack(
+                rx.box(
+                    rx.icon("activity", size=24, color=rx.color("accent", 11)),
+                    display="grid",
+                    place_items="center",
+                    width="3.5rem",
+                    height="3.5rem",
+                    border="1px solid var(--accent-6)",
+                    border_radius="full",
+                    background_color=rx.color("accent", 3),
+                ),
+                rx.vstack(
+                    rx.heading(
+                        "Select laps to compare",
+                        size="5",
+                        weight="bold",
+                        text_align="center",
+                    ),
+                    rx.text(
+                        "Choose one or more lap times from the Laps tab to compare speed, throttle, and more.",
+                        size="3",
+                        color=rx.color("gray", 11),
+                        line_height="1.6",
+                        max_width="32rem",
+                        text_align="center",
+                    ),
+                    align="center",
+                    spacing="2",
+                    width="100%",
+                ),
+                rx.button(
+                    rx.text("Choose laps"),
+                    rx.icon("arrow-right", size=16),
+                    on_click=on_open_laps,
+                    variant="solid",
+                    size="3",
+                    cursor="pointer",
+                ),
+                align="center",
+                spacing="4",
+                width="100%",
+                padding_x="5",
+                padding_y="9",
             ),
-            rx.button("Choose laps", on_click=on_open_laps, variant="soft"),
             width="100%",
-            align="start",
+            max_width="48rem",
+            margin_x="auto",
+            background_color=rx.color("gray", 2),
+            border_width="1px",
+            border_style="solid",
+            border_color=rx.color("gray", 5),
+            box_shadow="0 18px 45px rgba(0, 0, 0, 0.12)",
         ),
         rx.cond(
             loading,
