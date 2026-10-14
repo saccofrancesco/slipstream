@@ -6,7 +6,12 @@ from typing import TypedDict
 import reflex as rx
 
 from .layout import loading_card, status_card
-from .trackmap import TrackmapCorner, TrackmapPoint, TrackmapSegment, trackmap
+from .trackmap import (
+    TrackmapCorner,
+    TrackmapPoint,
+    TrackmapSegment,
+    telemetry_track_sync,
+)
 
 CHART_MARGIN: dict[str, int] = {"top": 10, "right": 20, "left": 0, "bottom": 4}
 CHART_MIN_WIDTH: str = "900px"
@@ -426,19 +431,7 @@ def telemetry_section(
                         width="100%",
                         align="start",
                     ),
-                    rx.vstack(
-                        rx.cond(
-                            track_points.length() > 1,
-                            trackmap(
-                                points=track_points,
-                                segments=track_segments,
-                                corners=track_corners,
-                                preserve_orientation=preserve_orientation,
-                                animation_key=animation_key,
-                                duration_ms=2200,
-                            ),
-                            rx.fragment(),
-                        ),
+                    telemetry_track_sync(
                         rx.box(
                             rx.vstack(
                                 _telemetry_chart(
@@ -507,9 +500,12 @@ def telemetry_section(
                             overflow_x="auto",
                             overflow_y="hidden",
                         ),
-                        width="100%",
-                        align="stretch",
-                        gap="1.5rem",
+                        points=track_points,
+                        segments=track_segments,
+                        corners=track_corners,
+                        preserve_orientation=preserve_orientation,
+                        animation_key=animation_key,
+                        duration_ms=2200,
                     ),
                 ),
             ),
