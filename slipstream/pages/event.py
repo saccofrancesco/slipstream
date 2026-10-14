@@ -448,10 +448,16 @@ class EventState(rx.State):
 
     @rx.var
     def telemetry_track_points(self) -> list[TrackmapPoint]:
-        """Return reference-lap coordinates for the local SVG component."""
+        """Pair reference-lap coordinates with chart-aligned distances."""
         return [
-            {"x": float(point["x"]), "y": float(point["y"])}
-            for point in self.telemetry_track_point_rows
+            {
+                "x": float(point["x"]),
+                "y": float(point["y"]),
+                "distance": float(row["distance"]),
+            }
+            for point, row in zip(
+                self.telemetry_track_point_rows, self.telemetry_rows, strict=True
+            )
         ]
 
     @rx.var
