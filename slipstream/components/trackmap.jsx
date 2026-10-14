@@ -364,9 +364,19 @@ function lapPointAtTime(lap, points, currentTime) {
 }
 
 function formatPlaybackTime(seconds) {
-  const safeSeconds = Math.max(0, Math.floor(finiteNumber(seconds)));
-  const minutes = Math.floor(safeSeconds / 60);
-  return minutes + ":" + String(safeSeconds % 60).padStart(2, "0");
+  const totalTenths = Math.max(
+    0,
+    Math.round(finiteNumber(seconds) * 10),
+  );
+  const wholeSeconds = Math.floor(totalTenths / 10);
+  const minutes = Math.floor(wholeSeconds / 60);
+  return (
+    minutes +
+    ":" +
+    String(wholeSeconds % 60).padStart(2, "0") +
+    "." +
+    String(totalTenths % 10)
+  );
 }
 
 function TrackmapPlaybackDots({ points, playbackLaps, scale }) {
@@ -535,10 +545,15 @@ export function TelemetryTrackSync({
     setCurrentTime(nextTime);
   }
 
-  function changeSpeed(event) {
-    const nextSpeed = finiteNumber(event.target.value, 1);
+  function changeSpeed(speedValue) {
+    const nextSpeed = finiteNumber(speedValue, 1);
     speedRef.current = nextSpeed;
     setSpeed(nextSpeed);
+  }
+
+  function restartPlayback() {
+    currentTimeRef.current = 0;
+    setCurrentTime(0);
   }
 
   function handleMouseMove(event) {
@@ -572,14 +587,39 @@ export function TelemetryTrackSync({
           playbackLaps={usablePlaybackLaps}
         />
         {playbackEnabled ? (
-          <div className="telemetry-player" aria-label="Selected lap playback">
+          <div
+            className="telemetry-player"
+            role="group"
+            aria-label="Selected lap playback"
+          >
             <button
               className="telemetry-player__toggle"
               type="button"
               onClick={togglePlayback}
               aria-label={isPlaying ? "Pause playback" : "Play playback"}
+              title={isPlaying ? "Pause" : "Play"}
             >
-              {isPlaying ? "Pause" : "Play"}
+              {isPlaying ? (
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M8 5.5v13L18.5 12 8 5.5z" />
+                </svg>
+              )}
+            </button>
+            <button
+              className="telemetry-player__restart"
+              type="button"
+              onClick={restartPlayback}
+              aria-label="Restart playback"
+              title="Restart"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4.5 8.5A8.5 8.5 0 1 1 4 14" />
+                <path d="M4.5 3.5v5h5" />
+              </svg>
             </button>
             <div className="telemetry-player__timeline">
               <input
@@ -590,6 +630,7 @@ export function TelemetryTrackSync({
                 step="0.01"
                 value={currentTime}
                 onChange={seekPlayback}
+                style={{ "--playback-progress": `${playbackProgress * 100}%` }}
                 aria-label="Playback position"
                 aria-valuetext={
                   formatPlaybackTime(currentTime) +
@@ -597,22 +638,33 @@ export function TelemetryTrackSync({
                   formatPlaybackTime(totalDuration)
                 }
               />
-              <div className="telemetry-player__times" aria-hidden="true">
-                <span>{formatPlaybackTime(currentTime)}</span>
-                <span>{formatPlaybackTime(totalDuration)}</span>
-              </div>
             </div>
-            <select
-              className="telemetry-player__speed"
-              value={speed}
-              onChange={changeSpeed}
+            <span className="telemetry-player__time" aria-live="off">
+              {formatPlaybackTime(currentTime)} / {formatPlaybackTime(totalDuration)}
+            </span>
+            <div
+              className="telemetry-player__speeds"
+              role="group"
               aria-label="Playback speed"
             >
-              <option value="0.5">0.5×</option>
-              <option value="1">1×</option>
-              <option value="1.5">1.5×</option>
-              <option value="2">2×</option>
-            </select>
+              {[0.5, 1, 2, 4].map((playbackSpeed) => (
+                <button
+                  key={playbackSpeed}
+                  className={
+                    "telemetry-player__speed" +
+                    (speed === playbackSpeed
+                      ? " telemetry-player__speed--active"
+                      : "")
+                  }
+                  type="button"
+                  onClick={() => changeSpeed(playbackSpeed)}
+                  aria-label={`${playbackSpeed} times speed`}
+                  aria-pressed={speed === playbackSpeed}
+                >
+                  {playbackSpeed}x
+                </button>
+              ))}
+            </div>
           </div>
         ) : null}
         {children}
