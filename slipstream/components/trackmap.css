@@ -15,6 +15,86 @@
   gap: 1.5rem;
 }
 
+.telemetry-player {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--gray-5);
+  border-radius: 0.75rem;
+  background: var(--gray-2);
+}
+
+.telemetry-player__toggle,
+.telemetry-player__speed {
+  min-height: 2.4rem;
+  border: 1px solid var(--gray-6);
+  border-radius: 0.5rem;
+  background: var(--gray-3);
+  color: var(--gray-12);
+  font: inherit;
+}
+
+.telemetry-player__toggle {
+  min-width: 4.25rem;
+  padding: 0 0.8rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 650;
+}
+
+.telemetry-player__speed {
+  padding: 0 0.6rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+
+.telemetry-player__toggle:hover,
+.telemetry-player__speed:hover {
+  border-color: var(--gray-8);
+}
+
+.telemetry-player__toggle:focus-visible,
+.telemetry-player__speed:focus-visible,
+.telemetry-player__range:focus-visible {
+  outline: 2px solid var(--accent-9);
+  outline-offset: 2px;
+}
+
+.telemetry-player__timeline {
+  min-width: 0;
+  width: 100%;
+}
+
+.telemetry-player__range {
+  display: block;
+  width: 100%;
+  height: 1rem;
+  margin: 0;
+  accent-color: var(--accent-9);
+  cursor: pointer;
+}
+
+.telemetry-player__times {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: var(--gray-10);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.trackmap__playback-dots {
+  pointer-events: none;
+}
+
+.trackmap__playback-dot {
+  pointer-events: visiblePainted;
+}
+
 .trackmap__white-path,
 .trackmap__colored-path {
   stroke-dasharray: 1;
@@ -68,5 +148,25 @@
   .trackmap__corners {
     animation: none;
     opacity: 1;
+  }
+}
+
+@media (max-width: 540px) {
+  .telemetry-player {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.55rem 0.75rem;
+  }
+
+  .telemetry-player__toggle {
+    justify-self: start;
+  }
+
+  .telemetry-player__speed {
+    justify-self: end;
+  }
+
+  .telemetry-player__timeline {
+    grid-column: 1 / -1;
+    grid-row: 2;
   }
 }

@@ -1,4 +1,26 @@
 import React from "react";
+import { ReferenceLine } from "recharts";
+
+const PlaybackContext = React.createContext({
+  enabled: false,
+  currentTime: 0,
+  progress: 0,
+});
+
+export function TelemetryPlaybackLine({ distanceMetres = 0 }) {
+  const playback = React.useContext(PlaybackContext);
+  if (!playback.enabled) return null;
+
+  return (
+    <ReferenceLine
+      x={playback.progress * finiteNumber(distanceMetres)}
+      stroke="var(--accent-9)"
+      strokeWidth={2}
+      zIndex={500}
+      ifOverflow="hidden"
+    />
+  );
+}
 
 function finiteNumber(value, fallback = 0) {
   const number = Number(value);
@@ -113,67 +135,106 @@ export function Trackmap({
   animationKey = "",
   durationMs = 2200,
   activePointIndex = 0,
+  playbackLaps = [],
 }) {
-  const sourcePoints = points.map((point) => ({
-    x: finiteNumber(point.x),
-    y: -finiteNumber(point.y),
-  }));
+  const geometry = React.useMemo(() => {
+    const sourcePoints = points.map((point) => ({
+      x: finiteNumber(point.x),
+      y: -finiteNumber(point.y),
+    }));
+    if (sourcePoints.length < 2) return null;
 
-  if (sourcePoints.length < 2) return null;
-
-  const sourceCorners = corners.map((corner) => ({
-    label: String(corner.label ?? ""),
-    trackX: finiteNumber(corner.track_x ?? corner.trackX),
-    trackY: -finiteNumber(corner.track_y ?? corner.trackY),
-    labelX: finiteNumber(corner.label_x ?? corner.labelX),
-    labelY: -finiteNumber(corner.label_y ?? corner.labelY),
-  }));
-  const rotation = preserveOrientation
-    ? 0
-    : minimumHeightRotation([
-        ...sourcePoints,
-        ...sourceCorners.flatMap((corner) => [
-          { x: corner.trackX, y: corner.trackY },
-          { x: corner.labelX, y: corner.labelY },
-        ]),
-      ]);
-  const displayPoints = sourcePoints.map((point) => rotatePoint(point, rotation));
-  const displayCorners = sourceCorners.map((corner) => {
-    const track = rotatePoint({ x: corner.trackX, y: corner.trackY }, rotation);
-    const label = rotatePoint({ x: corner.labelX, y: corner.labelY }, rotation);
+    const sourceCorners = corners.map((corner) => ({
+      label: String(corner.label ?? ""),
+      trackX: finiteNumber(corner.track_x ?? corner.trackX),
+      trackY: -finiteNumber(corner.track_y ?? corner.trackY),
+      labelX: finiteNumber(corner.label_x ?? corner.labelX),
+      labelY: -finiteNumber(corner.label_y ?? corner.labelY),
+    }));
+    const rotation = preserveOrientation
+      ? 0
+      : minimumHeightRotation([
+          ...sourcePoints,
+          ...sourceCorners.flatMap((corner) => [
+            { x: corner.trackX, y: corner.trackY },
+            { x: corner.labelX, y: corner.labelY },
+          ]),
+        ]);
+    const displayPoints = sourcePoints.map((point) =>
+      rotatePoint(point, rotation),
+    );
+    const displayCorners = sourceCorners.map((corner) => {
+      const track = rotatePoint({ x: corner.trackX, y: corner.trackY }, rotation);
+      const label = rotatePoint({ x: corner.labelX, y: corner.labelY }, rotation);
+      return {
+        ...corner,
+        trackX: track.x,
+        trackY: track.y,
+        labelX: label.x,
+        labelY: label.y,
+      };
+    });
+    const boundsX = [
+      ...displayPoints.map((point) => point.x),
+      ...displayCorners.flatMap((corner) => [corner.trackX, corner.labelX]),
+    ];
+    const boundsY = [
+      ...displayPoints.map((point) => point.y),
+      ...displayCorners.flatMap((corner) => [corner.trackY, corner.labelY]),
+    ];
+    const minX = Math.min(...boundsX);
+    const maxX = Math.max(...boundsX);
+    const minY = Math.min(...boundsY);
+    const maxY = Math.max(...boundsY);
+    const width = Math.max(maxX - minX, 1);
+    const height = Math.max(maxY - minY, 1);
+    const scale = Math.max(width, height);
+    const padding = scale * 0.055;
+    const viewBoxWidth = width + padding * 2;
+    const viewBoxHeight = height + padding * 2;
+    const segmentPaths = segments.map((segment, index) => {
+      const start = Math.max(
+        0,
+        Math.floor(finiteNumber(segment.start_index ?? segment.startIndex)),
+      );
+      const end = Math.min(
+        displayPoints.length - 1,
+        Math.floor(finiteNumber(segment.end_index ?? segment.endIndex)),
+      );
+      return {
+        key: String(segment.winner || "winner") + "-" + start + "-" + end + "-" + index,
+        path: pathFromPoints(displayPoints.slice(start, end + 1)),
+        color: segment.color || "white",
+      };
+    });
     return {
-      ...corner,
-      trackX: track.x,
-      trackY: track.y,
-      labelX: label.x,
-      labelY: label.y,
+      displayPoints,
+      displayCorners,
+      scale,
+      viewBoxWidth,
+      viewBoxHeight,
+      viewBox: (minX - padding) + " " + (minY - padding) + " " + viewBoxWidth + " " + viewBoxHeight,
+      fullPath: pathFromPoints(displayPoints),
+      segmentPaths,
     };
-  });
-  const boundsX = [
-    ...displayPoints.map((point) => point.x),
-    ...displayCorners.flatMap((corner) => [corner.trackX, corner.labelX]),
-  ];
-  const boundsY = [
-    ...displayPoints.map((point) => point.y),
-    ...displayCorners.flatMap((corner) => [corner.trackY, corner.labelY]),
-  ];
-  const minX = Math.min(...boundsX);
-  const maxX = Math.max(...boundsX);
-  const minY = Math.min(...boundsY);
-  const maxY = Math.max(...boundsY);
-  const width = Math.max(maxX - minX, 1);
-  const height = Math.max(maxY - minY, 1);
-  const scale = Math.max(width, height);
-  const padding = scale * 0.055;
-  const viewBoxWidth = width + padding * 2;
-  const viewBoxHeight = height + padding * 2;
-  const viewBox = `${minX - padding} ${minY - padding} ${viewBoxWidth} ${viewBoxHeight}`;
-  const fullPath = pathFromPoints(displayPoints);
+  }, [points, segments, corners, preserveOrientation]);
+
+  if (!geometry) return null;
+  const {
+    displayPoints,
+    displayCorners,
+    scale,
+    viewBoxWidth,
+    viewBoxHeight,
+    viewBox,
+    fullPath,
+    segmentPaths,
+  } = geometry;
   const outlineWidth = scale * 0.018;
   const colorWidth = scale * 0.011;
   const markerRadius = scale * 0.014;
   const markerFontSize = scale * 0.016;
-  const positionMarkerRadius = scale * 0.012;
+  const positionMarkerRadius = scale * 0.018;
   const positionMarkerIndex = Math.min(
     displayPoints.length - 1,
     Math.max(0, Math.round(finiteNumber(activePointIndex))),
@@ -211,30 +272,21 @@ export function Trackmap({
           strokeLinejoin="round"
         />
 
-        {segments.map((segment, index) => {
-          const start = Math.max(
-            0,
-            Math.floor(finiteNumber(segment.start_index ?? segment.startIndex)),
-          );
-          const end = Math.min(
-            displayPoints.length - 1,
-            Math.floor(finiteNumber(segment.end_index ?? segment.endIndex)),
-          );
-          const segmentPath = pathFromPoints(displayPoints.slice(start, end + 1));
-          return segmentPath ? (
+        {segmentPaths.map((segment) =>
+          segment.path ? (
             <path
               className="trackmap__colored-path"
-              key={`${segment.winner || "winner"}-${start}-${end}-${index}`}
-              d={segmentPath}
+              key={segment.key}
+              d={segment.path}
               pathLength="1"
               fill="none"
-              stroke={segment.color || "white"}
+              stroke={segment.color}
               strokeWidth={colorWidth}
               strokeLinecap="round"
               strokeLinejoin="round"
             />
-          ) : null;
-        })}
+          ) : null
+        )}
 
         <g className="trackmap__corners" aria-hidden="true">
           {displayCorners.map((corner, index) => (
@@ -268,12 +320,79 @@ export function Trackmap({
           cy={positionMarker.y}
           r={positionMarkerRadius}
           fill="white"
-          stroke="var(--gray-2)"
-          strokeWidth={scale * 0.004}
           aria-hidden="true"
+        />
+        <TrackmapPlaybackDots
+          points={displayPoints}
+          playbackLaps={playbackLaps}
+          scale={scale}
         />
       </g>
     </svg>
+  );
+}
+
+function lapPointAtTime(lap, points, currentTime) {
+  const elapsed = lap.elapsed;
+  if (currentTime <= 0) return points[0];
+  if (currentTime >= lap.duration) return points[points.length - 1];
+
+  let low = 0;
+  let high = elapsed.length - 1;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (elapsed[middle] < currentTime) low = middle + 1;
+    else high = middle;
+  }
+
+  const upperIndex = Math.max(1, low);
+  const lowerIndex = upperIndex - 1;
+  const span = elapsed[upperIndex] - elapsed[lowerIndex];
+  const fraction =
+    span > 0
+      ? Math.min(
+          1,
+          Math.max(0, (currentTime - elapsed[lowerIndex]) / span),
+        )
+      : 0;
+  const first = points[lowerIndex];
+  const second = points[upperIndex];
+  return {
+    x: first.x + (second.x - first.x) * fraction,
+    y: first.y + (second.y - first.y) * fraction,
+  };
+}
+
+function formatPlaybackTime(seconds) {
+  const safeSeconds = Math.max(0, Math.floor(finiteNumber(seconds)));
+  const minutes = Math.floor(safeSeconds / 60);
+  return minutes + ":" + String(safeSeconds % 60).padStart(2, "0");
+}
+
+function TrackmapPlaybackDots({ points, playbackLaps, scale }) {
+  const playback = React.useContext(PlaybackContext);
+  if (!playback.enabled) return null;
+
+  return (
+    <g className="trackmap__playback-dots" aria-label="Lap playback positions">
+      {playbackLaps.map((lap) => {
+        const point = lapPointAtTime(lap, points, playback.currentTime);
+        return (
+          <circle
+            key={lap.key}
+            cx={point.x}
+            cy={point.y}
+            r={scale * (lap.baseline ? 0.015 : 0.013)}
+            fill={lap.color || "white"}
+            stroke="var(--gray-2)"
+            strokeWidth={scale * 0.004}
+            className="trackmap__playback-dot"
+          >
+            <title>{lap.label}</title>
+          </circle>
+        );
+      })}
+    </g>
   );
 }
 
@@ -290,6 +409,8 @@ function chartPlotBounds(chart) {
   return surfaceBounds?.width > 0 ? surfaceBounds : chart.getBoundingClientRect();
 }
 
+const MemoizedTrackmap = React.memo(Trackmap);
+
 export function TelemetryTrackSync({
   points = [],
   segments = [],
@@ -297,14 +418,128 @@ export function TelemetryTrackSync({
   preserveOrientation = false,
   animationKey = "",
   durationMs = 2200,
+  playbackLaps = [],
+  playbackKey = "",
+  distanceMetres = 0,
   children,
 }) {
   const [activePointIndex, setActivePointIndex] = React.useState(0);
+  const [currentTime, setCurrentTime] = React.useState(0);
+  const [isPlaying, setIsPlaying] = React.useState(false);
+  const [speed, setSpeed] = React.useState(1);
+  const currentTimeRef = React.useRef(0);
+  const speedRef = React.useRef(1);
+
+  const usablePlaybackLaps = React.useMemo(
+    () =>
+      playbackLaps.filter(
+        (lap) =>
+          points.length >= 2 &&
+          lap.elapsed?.length === points.length &&
+          Number.isFinite(Number(lap.duration)) &&
+          Number(lap.duration) > 0 &&
+          lap.elapsed.every((value) => Number.isFinite(Number(value))),
+      ),
+    [playbackLaps, points.length],
+  );
+  const totalDuration = React.useMemo(
+    () =>
+      usablePlaybackLaps.reduce(
+        (duration, lap) => Math.max(duration, Number(lap.duration)),
+        0,
+      ),
+    [usablePlaybackLaps],
+  );
+  const playbackEnabled = usablePlaybackLaps.length > 0 && totalDuration > 0;
+  const playbackProgress = playbackEnabled
+    ? Math.min(1, Math.max(0, currentTime / totalDuration))
+    : 0;
+  const playbackContext = React.useMemo(
+    () => ({
+      enabled: playbackEnabled,
+      currentTime,
+      progress: playbackProgress,
+    }),
+    [playbackEnabled, currentTime, playbackProgress],
+  );
 
   React.useEffect(() => {
     // A newly loaded lap always starts with the marker on the finish line.
     setActivePointIndex(0);
   }, [animationKey, points.length]);
+
+  React.useEffect(() => {
+    setIsPlaying(false);
+    currentTimeRef.current = 0;
+    setCurrentTime(0);
+    speedRef.current = 1;
+    setSpeed(1);
+  }, [playbackKey]);
+
+  React.useEffect(() => {
+    if (!isPlaying || !playbackEnabled) return undefined;
+
+    let animationFrame = 0;
+    let previousTimestamp = null;
+    const advance = (timestamp) => {
+      if (document.visibilityState === "hidden") {
+        setIsPlaying(false);
+        return;
+      }
+      if (previousTimestamp === null) previousTimestamp = timestamp;
+      const deltaSeconds = (timestamp - previousTimestamp) / 1000;
+      previousTimestamp = timestamp;
+      const nextTime = Math.min(
+        totalDuration,
+        currentTimeRef.current + deltaSeconds * speedRef.current,
+      );
+      currentTimeRef.current = nextTime;
+      setCurrentTime(nextTime);
+      if (nextTime >= totalDuration) {
+        setIsPlaying(false);
+        return;
+      }
+      animationFrame = window.requestAnimationFrame(advance);
+    };
+
+    animationFrame = window.requestAnimationFrame(advance);
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [isPlaying, playbackEnabled, totalDuration]);
+
+  React.useEffect(() => {
+    const pauseWhenHidden = () => {
+      if (document.visibilityState === "hidden") setIsPlaying(false);
+    };
+    document.addEventListener("visibilitychange", pauseWhenHidden);
+    return () => document.removeEventListener("visibilitychange", pauseWhenHidden);
+  }, []);
+
+  function togglePlayback() {
+    if (isPlaying) {
+      setIsPlaying(false);
+      return;
+    }
+    if (currentTimeRef.current >= totalDuration) {
+      currentTimeRef.current = 0;
+      setCurrentTime(0);
+    }
+    setIsPlaying(true);
+  }
+
+  function seekPlayback(event) {
+    const nextTime = Math.min(
+      totalDuration,
+      Math.max(0, finiteNumber(event.target.value)),
+    );
+    currentTimeRef.current = nextTime;
+    setCurrentTime(nextTime);
+  }
+
+  function changeSpeed(event) {
+    const nextSpeed = finiteNumber(event.target.value, 1);
+    speedRef.current = nextSpeed;
+    setSpeed(nextSpeed);
+  }
 
   function handleMouseMove(event) {
     const target = event.target instanceof Element ? event.target : null;
@@ -324,17 +559,64 @@ export function TelemetryTrackSync({
   }
 
   return (
-    <div className="telemetry-track-sync" onMouseMove={handleMouseMove}>
-      <Trackmap
-        points={points}
-        segments={segments}
-        corners={corners}
-        preserveOrientation={preserveOrientation}
-        animationKey={animationKey}
-        durationMs={durationMs}
-        activePointIndex={activePointIndex}
-      />
-      {children}
-    </div>
+    <PlaybackContext.Provider value={playbackContext}>
+      <div className="telemetry-track-sync" onMouseMove={handleMouseMove}>
+        <MemoizedTrackmap
+          points={points}
+          segments={segments}
+          corners={corners}
+          preserveOrientation={preserveOrientation}
+          animationKey={animationKey}
+          durationMs={durationMs}
+          activePointIndex={activePointIndex}
+          playbackLaps={usablePlaybackLaps}
+        />
+        {playbackEnabled ? (
+          <div className="telemetry-player" aria-label="Selected lap playback">
+            <button
+              className="telemetry-player__toggle"
+              type="button"
+              onClick={togglePlayback}
+              aria-label={isPlaying ? "Pause playback" : "Play playback"}
+            >
+              {isPlaying ? "Pause" : "Play"}
+            </button>
+            <div className="telemetry-player__timeline">
+              <input
+                className="telemetry-player__range"
+                type="range"
+                min="0"
+                max={totalDuration}
+                step="0.01"
+                value={currentTime}
+                onChange={seekPlayback}
+                aria-label="Playback position"
+                aria-valuetext={
+                  formatPlaybackTime(currentTime) +
+                  " of " +
+                  formatPlaybackTime(totalDuration)
+                }
+              />
+              <div className="telemetry-player__times" aria-hidden="true">
+                <span>{formatPlaybackTime(currentTime)}</span>
+                <span>{formatPlaybackTime(totalDuration)}</span>
+              </div>
+            </div>
+            <select
+              className="telemetry-player__speed"
+              value={speed}
+              onChange={changeSpeed}
+              aria-label="Playback speed"
+            >
+              <option value="0.5">0.5×</option>
+              <option value="1">1×</option>
+              <option value="1.5">1.5×</option>
+              <option value="2">2×</option>
+            </select>
+          </div>
+        ) : null}
+        {children}
+      </div>
+    </PlaybackContext.Provider>
   );
 }
