@@ -9,10 +9,11 @@ _TRACKMAP_CSS_PATH = rx.asset("./trackmap.css", shared=True)
 
 
 class TrackmapPoint(TypedDict):
-    """One ordered coordinate in the displayed track path."""
+    """One track coordinate aligned to its chart distance sample."""
 
     x: float
     y: float
+    distance: float
 
 
 class TrackmapSegment(TypedDict):
