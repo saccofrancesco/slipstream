@@ -591,11 +591,17 @@ class EventState(rx.State):
 
     @rx.event
     def toggle_driver(self, code: str) -> None:
-        """Add or remove a selectable driver from the lap chart."""
+        """Toggle a lap-chart driver and clear that driver's selected laps."""
         if not any(driver["code"] == code for driver in self.lap_drivers):
             return
         if code in self.selected_drivers:
             self.selected_drivers = [item for item in self.selected_drivers if item != code]
+            remaining_laps = [
+                lap for lap in self.selected_laps if lap["driver"] != code
+            ]
+            if len(remaining_laps) != len(self.selected_laps):
+                self.selected_laps = remaining_laps
+                self._clear_telemetry()
         else:
             self.selected_drivers = [*self.selected_drivers, code]
 
