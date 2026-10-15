@@ -1,4 +1,7 @@
 .states
+.env
+.env.*
+!.env.example
 *.py[cod]
 assets/external/
 .web
