@@ -1,16 +1,45 @@
 name: Deploy Reflex App
 
 on:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.14"
+      - name: Install application dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Compile Reflex application
+        run: reflex compile --dry
+      - name: Install dependency auditor
+        run: python -m pip install pip-audit==2.10.1
+      - name: Audit pinned dependencies
+        # FastF1 requires SignalR Core, which pins msgpack 1.1.2. The app does
+        # not use SignalR's MessagePack transport; track the upstream fix in
+        # AUDIT.md and remove this exception once SignalR Core updates its pin.
+        run: pip-audit -r requirements.txt --ignore-vuln PYSEC-2026-3625
+
   deploy:
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to Reflex Cloud
-        uses: reflex-dev/reflex-deploy-action@v1
+        uses: reflex-dev/reflex-deploy-action@79db7d19c5022da6f09fa5018102c4f5d3121967 # v1.0.0
         with:
           auth_token: ${{ secrets.REFLEX_AUTH_TOKEN }}
           project_id: ${{ secrets.REFLEX_PROJECT_ID }}
