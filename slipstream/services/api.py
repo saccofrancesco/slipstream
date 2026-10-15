@@ -23,7 +23,8 @@ from .flags import (
     flag_for_nationality,
 )
 
-# Avoid reusing cached results when schedule or standings data is requested.
+# Keep FastF1's unbounded parsed cache disabled. The application-level cache in
+# cached.py applies explicit freshness windows to normalized provider results.
 fastf1.Cache.set_disabled()
 
 # Reuse one Ergast client for schedule and standings requests.
@@ -294,15 +295,12 @@ def get_event_details(
         Normalized event details, or ``None`` when the route does not match an
         event in the published schedule.
     """
-    parsed_season: int | None = parse_integer(season)
-    parsed_round: int | None = parse_integer(round_number)
-    if (
-        parsed_season is None
-        or parsed_round is None
-        or parsed_season < 1950
-        or parsed_round < 1
-    ):
+    coordinates: tuple[int, int] | None = parse_event_coordinates(
+        season, round_number
+    )
+    if coordinates is None:
         return None
+    parsed_season, parsed_round = coordinates
 
     response: list[dict[str, Any]] = ergast.get_race_schedule(
         season=parsed_season,
@@ -431,8 +429,7 @@ def get_session_classification(
         ValueError: If a route value or session identifier is invalid.
         Exception: Propagates FastF1 loading errors for the page to report.
     """
-    parsed_season: int | None = parse_integer(season)
-    parsed_round: int | None = parse_integer(round_number)
+    coordinates: tuple[int, int] | None = parse_event_coordinates(season, round_number)
     allowed_codes: set[str] = {
         "FP1",
         "FP2",
@@ -443,8 +440,9 @@ def get_session_classification(
         "Q",
         "R",
     }
-    if parsed_season is None or parsed_round is None:
-        raise ValueError("A numeric season and round are required.")
+    if coordinates is None:
+        raise ValueError("A supported numeric season and round are required.")
+    parsed_season, parsed_round = coordinates
     if session_code not in allowed_codes:
         raise ValueError("The requested session is not supported.")
 
@@ -616,11 +614,11 @@ def has_session_results(
     Returns:
         Whether at least one driver result row is available.
     """
-    parsed_season: int | None = parse_integer(season)
-    parsed_round: int | None = parse_integer(round_number)
+    coordinates: tuple[int, int] | None = parse_event_coordinates(season, round_number)
     allowed_codes: set[str] = {code for _, code, _ in EVENT_SESSION_FIELDS} | {"R"}
-    if parsed_season is None or parsed_round is None or session_code not in allowed_codes:
+    if coordinates is None or session_code not in allowed_codes:
         return False
+    parsed_season, parsed_round = coordinates
 
     session: Session = fastf1.get_session(parsed_season, parsed_round, session_code)
     session.load(laps=False, telemetry=False, weather=False, messages=False)
@@ -663,10 +661,10 @@ def get_session_laps(
     Returns:
         Selectable drivers and timed laps, including outlier flags.
     """
-    parsed_season = parse_integer(season)
-    parsed_round = parse_integer(round_number)
-    if parsed_season is None or parsed_round is None:
-        raise ValueError("A numeric season and round are required.")
+    coordinates: tuple[int, int] | None = parse_event_coordinates(season, round_number)
+    if coordinates is None:
+        raise ValueError("A supported numeric season and round are required.")
+    parsed_season, parsed_round = coordinates
     if session_code not in {"FP1", "FP2", "FP3", "SQ", "SS", "S", "Q", "R"}:
         raise ValueError("The requested session is not supported.")
 
@@ -1574,12 +1572,9 @@ def get_team_color(
         if _is_missing(color):
             continue
         formatted_color: str = format_value(color)
-        if formatted_color:
-            return (
-                formatted_color
-                if formatted_color.startswith("#")
-                else f"#{formatted_color}"
-            )
+        hex_value: str = formatted_color.removeprefix("#")
+        if re.fullmatch(r"[0-9A-Fa-f]{6}", hex_value):
+            return f"#{hex_value}"
 
     # Use the season and round's official F1 timing feed when Ergast has no
     # team color. FastF1's plotting helper reads the session's driver/team data.
@@ -1664,7 +1659,7 @@ def get_session_team_color(
     except Exception:
         # Unknown names and missing timing data fall through to the palette.
         return ""
-    return color if color.startswith("#") else ""
+    return color if re.fullmatch(r"#[0-9A-Fa-f]{6}", color) else ""
 
 
 def parse_integer(value: object) -> int | None:
@@ -1680,6 +1675,31 @@ def parse_integer(value: object) -> int | None:
         return int(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def parse_event_coordinates(
+    season: object, round_number: object
+) -> tuple[int, int] | None:
+    """Parse an event route only within the supported calendar bounds.
+
+    Args:
+        season: Requested championship year.
+        round_number: Requested race round.
+
+    Returns:
+        Parsed season and round, or ``None`` when either value is invalid or
+        outside the supported range.
+    """
+    parsed_season: int | None = parse_integer(season)
+    parsed_round: int | None = parse_integer(round_number)
+    if (
+        parsed_season is None
+        or parsed_round is None
+        or not 1950 <= parsed_season <= date.today().year + 1
+        or not 1 <= parsed_round <= 30
+    ):
+        return None
+    return parsed_season, parsed_round
 
 
 def format_value(value: object) -> str:

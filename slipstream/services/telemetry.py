@@ -12,8 +12,11 @@ import pandas as pd
 from fastf1.core import Lap, Session
 from fastf1.exceptions import DataNotLoadedError
 
+from .api import parse_event_coordinates
+
 SAMPLE_SPACING_METRES: int = 5
 MINI_SECTOR_COUNT: int = 50
+MAX_SELECTED_TELEMETRY_LAPS: int = 4
 _SESSION_LOCK: Lock = Lock()
 
 
@@ -430,12 +433,25 @@ def get_session_telemetry(
     Returns:
         Shared distance rows, plotted lap metadata, baseline, and corners.
     """
+    coordinates: tuple[int, int] | None = parse_event_coordinates(
+        season, round_number
+    )
+    if coordinates is None:
+        raise ValueError("A supported numeric season and round are required")
+    parsed_season, parsed_round = coordinates
     if session_code not in {"FP1", "FP2", "FP3", "SQ", "SS", "S", "Q", "R"}:
         raise ValueError("The requested session is not supported")
-    session = _session(int(season), int(round_number), session_code)
+
+    unique_laps: tuple[tuple[str, int], ...] = tuple(dict.fromkeys(selected_laps))
+    if len(unique_laps) > MAX_SELECTED_TELEMETRY_LAPS:
+        raise ValueError(
+            f"Select no more than {MAX_SELECTED_TELEMETRY_LAPS} laps at once"
+        )
+
+    session = _session(parsed_season, parsed_round, session_code)
     available: list[_LapSamples] = []
     unavailable: list[str] = []
-    for driver, number in dict.fromkeys(selected_laps):
+    for driver, number in unique_laps:
         label = f"{driver} lap {number}"
         matching = session.laps[
             (session.laps["Driver"] == driver) & (session.laps["LapNumber"] == number)
