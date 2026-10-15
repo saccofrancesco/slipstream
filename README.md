@@ -52,7 +52,7 @@ Slipstream brings Formula 1 race data into one place. Follow the current or next
 * **Championship standings** – Presents the latest driver and team standings after a completed race.
 * **Responsive interface** – Uses Reflex components across the results and championship pages.
 
-The event page also has a **Telemetry** tab; its content is still in development.
+The event page includes an interactive **Telemetry** tab for comparing selected laps.
 
 ---
 
@@ -114,7 +114,7 @@ Check out another project by the same author:
 
 ## 📜 License
 
-No license file has been added to this repository yet.
+See the [LICENSE](LICENSE) file for license terms.
 
 ---
 
