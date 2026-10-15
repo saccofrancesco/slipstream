@@ -1,6 +1,7 @@
 """Featured race weekend and season archive for the results page."""
 
 import asyncio
+import logging
 from collections.abc import AsyncGenerator
 from datetime import date
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -25,11 +26,15 @@ from slipstream.services import (
     ScheduledSession,
     TrackSessionDetails,
     format_weekend_schedule,
-    get_past_events,
-    get_race_weekend,
-    get_track_session_details,
-    has_session_results,
 )
+from slipstream.services.cached import (
+    get_cached_past_events,
+    get_cached_race_weekend,
+    get_cached_session_results,
+    get_cached_track_session_details,
+)
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 class ResultsState(rx.State):
@@ -163,11 +168,11 @@ class ResultsState(rx.State):
             # The FastF1 client is synchronous; keep its request off the
             # Reflex event loop while retaining an async page-load event.
             weekend: RaceWeekend | None = await asyncio.to_thread(
-                get_race_weekend, current_date
+                get_cached_race_weekend, current_date
             )
             if weekend is not None:
                 track_details: dict[str, TrackSessionDetails] = await asyncio.to_thread(
-                    get_track_session_details,
+                    get_cached_track_session_details,
                     weekend["season"],
                     weekend["round"],
                 )
@@ -209,10 +214,10 @@ class ResultsState(rx.State):
                         for day in self.schedule_days
                         for session in day["sessions"]
                     ]
-                    checks = await asyncio.gather(
+                    checks: list[bool | BaseException] = await asyncio.gather(
                         *(
                             asyncio.to_thread(
-                                has_session_results,
+                                get_cached_session_results,
                                 weekend["season"],
                                 weekend["round"],
                                 session["code"],
@@ -221,6 +226,17 @@ class ResultsState(rx.State):
                         ),
                         return_exceptions=True,
                     )
+                    for session, check in zip(sessions, checks, strict=True):
+                        if isinstance(check, BaseException):
+                            logger.warning(
+                                "Could not check session result availability",
+                                extra={
+                                    "season": weekend["season"],
+                                    "round": weekend["round"],
+                                    "session": session["code"],
+                                },
+                                exc_info=(type(check), check, check.__traceback__),
+                            )
                     available_codes: set[str] = {
                         session["code"]
                         for session, available in zip(sessions, checks)
@@ -242,6 +258,7 @@ class ResultsState(rx.State):
                         for day in self.schedule_days
                     ]
         except Exception:
+            logger.exception("Could not load the featured race weekend")
             self.race_weekend = {}
             self.schedule_days = []
             self.error = "Could not load the race schedule. Please try again."
@@ -251,9 +268,13 @@ class ResultsState(rx.State):
 
         try:
             self.past_events = await asyncio.to_thread(
-                get_past_events, self.archive_season, current_date
+                get_cached_past_events, self.archive_season, current_date
             )
         except Exception:
+            logger.exception(
+                "Could not load past events",
+                extra={"season": self.archive_season},
+            )
             self.past_events = []
             self.archive_error = "Could not load past events. Please try again."
         finally:

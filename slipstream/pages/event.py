@@ -1,8 +1,10 @@
 """Archive event detail route and its selected-session classification state."""
 
 import asyncio
+import logging
 from collections.abc import AsyncGenerator
 from math import floor
+from time import monotonic
 from typing import TypedDict
 
 import reflex as rx
@@ -48,11 +50,14 @@ from slipstream.services import (
     TelemetryTrackCorner,
     TelemetryTrackPoint,
     TelemetryTrackSegment,
-    get_event_details,
-    get_session_classification,
-    get_session_laps,
     get_session_telemetry,
 )
+from slipstream.services.cached import (
+    get_cached_event_details,
+    get_cached_session_classification,
+    get_cached_session_laps,
+)
+from slipstream.services.telemetry import MAX_SELECTED_TELEMETRY_LAPS
 
 TYRE_ICON_PATHS: dict[str, str] = {
     "SOFT": "/tyres/soft.svg",
@@ -61,6 +66,8 @@ TYRE_ICON_PATHS: dict[str, str] = {
     "INTERMEDIATE": "/tyres/intermediate.svg",
     "WET": "/tyres/wet.svg",
 }
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 class SelectedLap(TypedDict):
@@ -105,7 +112,12 @@ def _lap_chart_axis(times: list[float]) -> LapChartAxis:
                     "width": 64 if precision == 0 else 72 if precision < 3 else 80,
                 }
 
-    return {"domain": [lower, upper], "ticks": [lower, upper], "precision": 3, "width": 80}
+    return {
+        "domain": [lower, upper],
+        "ticks": [lower, upper],
+        "precision": 3,
+        "width": 80,
+    }
 
 
 class EventState(rx.State):
@@ -116,6 +128,7 @@ class EventState(rx.State):
     event: dict[str, str] = {}
     sessions: list[SessionOption] = []
     selected_session: str = "R"
+    _event_request_generation: int = 0
     classification: list[DriverClassification] = []
     loading: bool = True
     error: str = ""
@@ -167,7 +180,9 @@ class EventState(rx.State):
         """Mark selections and use white for a selected teammate's line."""
         first_by_team: dict[str, str] = {}
         for code in self.selected_drivers:
-            driver = next((item for item in self.lap_drivers if item["code"] == code), None)
+            driver = next(
+                (item for item in self.lap_drivers if item["code"] == code), None
+            )
             if driver is not None:
                 first_by_team.setdefault(driver["team"] or code, code)
         team_order: list[str] = []
@@ -530,8 +545,25 @@ class EventState(rx.State):
 
     def _telemetry_selection_key(self) -> str:
         """Identify the session and exact selected lap pool for stale-load checks."""
-        laps = ",".join(f"{lap['driver']}:{lap['number']}" for lap in self.selected_laps)
+        laps = ",".join(
+            f"{lap['driver']}:{lap['number']}" for lap in self.selected_laps
+        )
         return f"{self.event_season}:{self.round_number}:{self.selected_session}:{laps}"
+
+    def _event_request_is_current(
+        self,
+        request_generation: int,
+        season: str,
+        round_number: str,
+        session_code: str,
+    ) -> bool:
+        """Check whether an async result still belongs to the visible event."""
+        return (
+            self._event_request_generation == request_generation
+            and self.event_season == season
+            and self.round_number == round_number
+            and self.selected_session == session_code
+        )
 
     def _clear_telemetry(self) -> None:
         """Drop chart data when the selected session or laps change."""
@@ -556,8 +588,15 @@ class EventState(rx.State):
         self.active_tab = tab
         if tab == "telemetry":
             self.telemetry_animation_iteration += 1
-        if tab == "laps" and self.event and not self.laps_loaded and not self.laps_loading:
-            async for update in self._load_laps(self.selected_session):
+        if (
+            tab == "laps"
+            and self.event
+            and not self.laps_loaded
+            and not self.laps_loading
+        ):
+            async for update in self._load_laps(
+                self.selected_session, self._event_request_generation
+            ):
                 yield update
         if (
             tab == "telemetry"
@@ -574,6 +613,7 @@ class EventState(rx.State):
         requested_laps = [
             (lap["driver"], lap["number"]) for lap in self.selected_laps
         ]
+        started_at: float = monotonic()
         self.telemetry_loading = True
         self.telemetry_error = ""
         yield
@@ -587,6 +627,16 @@ class EventState(rx.State):
             )
         except Exception:
             if self._telemetry_selection_key() == request_key:
+                logger.exception(
+                    "Could not load selected lap telemetry",
+                    extra={
+                        "season": self.event_season,
+                        "round": self.round_number,
+                        "session": self.selected_session,
+                        "selected_lap_count": len(requested_laps),
+                        "duration_ms": round((monotonic() - started_at) * 1000, 1),
+                    },
+                )
                 self.telemetry_error = (
                     "Could not load the selected laps' telemetry. Please try again."
                 )
@@ -630,7 +680,9 @@ class EventState(rx.State):
         if not any(driver["code"] == code for driver in self.lap_drivers):
             return
         if code in self.selected_drivers:
-            self.selected_drivers = [item for item in self.selected_drivers if item != code]
+            self.selected_drivers = [
+                item for item in self.selected_drivers if item != code
+            ]
             remaining_laps = [
                 lap for lap in self.selected_laps if lap["driver"] != code
             ]
@@ -661,6 +713,14 @@ class EventState(rx.State):
             self._clear_telemetry()
             return None
 
+        if len(self.selected_laps) >= MAX_SELECTED_TELEMETRY_LAPS:
+            return rx.toast(
+                f"Compare up to {MAX_SELECTED_TELEMETRY_LAPS} laps at once.",
+                close_button=True,
+                dismissible=True,
+                duration=4500,
+            )
+
         self.selected_laps = [*self.selected_laps, {"driver": code, "number": number}]
         self._clear_telemetry()
         return rx.toast(
@@ -689,9 +749,12 @@ class EventState(rx.State):
     @rx.event
     async def load_event(self) -> AsyncGenerator[None, None]:
         """Load route event metadata, then its default Race classification."""
-        params: dict[str, str] = self.router.page.params
-        self.event_season = params.get("season", "")
-        self.round_number = params.get("round", "")
+        self._event_request_generation += 1
+        request_generation: int = self._event_request_generation
+        route_season: str = self.season
+        route_round: str = self.round
+        self.event_season = route_season
+        self.round_number = route_round
         self.event = {}
         self.sessions = []
         self.selected_session = "R"
@@ -713,11 +776,20 @@ class EventState(rx.State):
 
         try:
             details: EventDetails | None = await asyncio.to_thread(
-                get_event_details, self.event_season, self.round_number
+                get_cached_event_details, route_season, route_round
             )
         except Exception:
+            if request_generation != self._event_request_generation:
+                return
+            logger.exception(
+                "Could not load archive event details",
+                extra={"season": route_season, "round": route_round},
+            )
             self.error = "Could not load this archive event. Please try again."
             self.loading = False
+            return
+
+        if request_generation != self._event_request_generation:
             return
 
         if details is None:
@@ -742,8 +814,14 @@ class EventState(rx.State):
             self.selected_session = requested_session
         yield
 
-        await self._load_classification(self.selected_session)
-        self.loading = False
+        session_code: str = self.selected_session
+        if not self._event_request_is_current(
+            request_generation, route_season, route_round, session_code
+        ):
+            return
+        await self._load_classification(session_code, request_generation)
+        if request_generation == self._event_request_generation:
+            self.loading = False
 
     @rx.event
     async def select_session(
@@ -762,6 +840,10 @@ class EventState(rx.State):
         ):
             return
 
+        self._event_request_generation += 1
+        request_generation: int = self._event_request_generation
+        route_season: str = self.event_season
+        route_round: str = self.round_number
         if session_code != self.selected_session:
             self.selected_laps = []
         self.selected_session = session_code
@@ -777,50 +859,99 @@ class EventState(rx.State):
         self._clear_telemetry()
         yield
 
-        await self._load_classification(session_code)
+        await self._load_classification(session_code, request_generation)
+        if not self._event_request_is_current(
+            request_generation, route_season, route_round, session_code
+        ):
+            return
         self.loading = False
         if self.active_tab == "laps":
-            async for update in self._load_laps(session_code):
+            async for update in self._load_laps(session_code, request_generation):
                 yield update
 
-    async def _load_laps(self, session_code: str) -> AsyncGenerator[None, None]:
+    async def _load_laps(
+        self, session_code: str, request_generation: int
+    ) -> AsyncGenerator[None, None]:
         """Fetch the selected session's timed laps without blocking the UI."""
+        route_season: str = self.event_season
+        route_round: str = self.round_number
         self.laps_loading = True
         self.laps_error = ""
         yield
         try:
             data: SessionLaps = await asyncio.to_thread(
-                get_session_laps,
-                self.event_season,
-                self.round_number,
+                get_cached_session_laps,
+                route_season,
+                route_round,
                 session_code,
             )
         except Exception:
-            if self.selected_session != session_code:
+            if not self._event_request_is_current(
+                request_generation, route_season, route_round, session_code
+            ):
                 return
+            logger.exception(
+                "Could not load session lap times",
+                extra={
+                    "season": route_season,
+                    "round": route_round,
+                    "session": session_code,
+                },
+            )
             self.lap_drivers = []
             self.lap_points = []
-            self.laps_error = "Could not load this session's lap times. Please try again."
+            self.laps_error = (
+                "Could not load this session's lap times. Please try again."
+            )
         else:
-            if self.selected_session != session_code:
+            if not self._event_request_is_current(
+                request_generation, route_season, route_round, session_code
+            ):
                 return
             self.lap_drivers = data["drivers"]
             self.lap_points = data["laps"]
             self.laps_loaded = bool(data["laps"])
-        self.laps_loading = False
+        finally:
+            if self._event_request_is_current(
+                request_generation, route_season, route_round, session_code
+            ):
+                self.laps_loading = False
 
-    async def _load_classification(self, session_code: str) -> None:
+    async def _load_classification(
+        self, session_code: str, request_generation: int
+    ) -> None:
         """Fetch one session's driver rows without blocking the event loop."""
+        route_season: str = self.event_season
+        route_round: str = self.round_number
         try:
             rows: list[DriverClassification] = await asyncio.to_thread(
-                get_session_classification,
-                self.event_season,
-                self.round_number,
+                get_cached_session_classification,
+                route_season,
+                route_round,
                 session_code,
             )
         except Exception:
+            if not self._event_request_is_current(
+                request_generation, route_season, route_round, session_code
+            ):
+                return
+            logger.exception(
+                "Could not load session classification",
+                extra={
+                    "season": route_season,
+                    "round": route_round,
+                    "session": session_code,
+                },
+            )
             self.classification = []
-            self.error = "Could not load this session's classification. Please try again."
+            self.error = (
+                "Could not load this session's classification. Please try again."
+            )
+            return
+
+        if not self._event_request_is_current(
+            request_generation, route_season, route_round, session_code
+        ):
             return
 
         self.classification = rows
@@ -830,7 +961,11 @@ class EventState(rx.State):
             )
 
 
-@rx.page("/results/[season]/[round]", "Grand Prix results", on_load=EventState.load_event)
+@rx.page(
+    "/results/[season]/[round]",
+    "Grand Prix results",
+    on_load=EventState.load_event,
+)
 def event_results() -> rx.Component:
     """Render one archived event and the selected session classification."""
     return rx.vstack(

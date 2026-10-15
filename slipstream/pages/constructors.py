@@ -1,6 +1,7 @@
 """Team championship page and its loading state."""
 
 import asyncio
+import logging
 from collections.abc import AsyncGenerator
 
 # Reflex provides state, event, and component primitives for this page.
@@ -9,11 +10,13 @@ import reflex as rx
 # Reuse shared presentation components and the constructor standings service.
 from slipstream.components import container, navbar, page_header
 from slipstream.components.championship import championship_section
-from slipstream.services import (
-    get_available_seasons,
-    get_completed_races,
-    get_constructor_standings,
+from slipstream.services.cached import (
+    get_cached_available_seasons,
+    get_cached_completed_races,
+    get_cached_constructor_standings,
 )
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 class ConstructorsState(rx.State):
@@ -57,18 +60,18 @@ class ConstructorsState(rx.State):
         yield
         try:
             # Run the blocking API client call outside the event loop.
-            seasons = await asyncio.to_thread(get_available_seasons, 1958)
+            seasons = await asyncio.to_thread(get_cached_available_seasons, 1958)
             if not seasons:
                 self.error = "Championship data is not available yet."
                 return
             season = seasons[0]
-            races = await asyncio.to_thread(get_completed_races, season)
+            races = await asyncio.to_thread(get_cached_completed_races, season)
             if not races:
                 self.error = "No completed races are available yet."
                 return
             latest_race = races[-1]
             self.standings = await asyncio.to_thread(
-                get_constructor_standings,
+                get_cached_constructor_standings,
                 int(season),
                 int(latest_race["round"]),
             )
@@ -76,6 +79,7 @@ class ConstructorsState(rx.State):
                 self.error = "No constructor standings are available for this race."
         except Exception:
             # Keep the UI usable and show a short message if loading fails.
+            logger.exception("Could not load constructor championship data")
             self.standings = []
             self.error = (
                 "Could not load constructor championship data. Please try again."
