@@ -1,6 +1,7 @@
 """Fetch and normalize Formula 1 schedules and championship standings."""
 
 import json
+import logging
 import re
 from datetime import date, datetime, time, timedelta, timezone
 from functools import lru_cache
@@ -16,6 +17,7 @@ import pandas as pd
 import requests
 from fastf1.core import Session
 from fastf1.ergast import Ergast
+from fastf1.exceptions import DataNotLoadedError
 
 from .flags import (
     flag_for_circuit_country,
@@ -29,6 +31,7 @@ fastf1.Cache.set_disabled()
 
 # Reuse one Ergast client for schedule and standings requests.
 ergast: Ergast = Ergast()
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 class ScheduledSession(TypedDict):
@@ -670,21 +673,49 @@ def get_session_laps(
 
     session: Session = fastf1.get_session(parsed_season, parsed_round, session_code)
     session.load(laps=True, telemetry=False, weather=False, messages=False)
-    if session.laps.empty:
-        return {"drivers": [], "laps": []}
-    try:
-        compound_colors = fastf1.plotting.get_compound_mapping(session)
-    except Exception:
-        # Some older or incomplete timing feeds do not identify the event year.
-        compound_colors = {
-            "SOFT": "#E10600",
-            "MEDIUM": "#F2CE22",
-            "HARD": "#F2F2F2",
-            "INTERMEDIATE": "#38B449",
-            "WET": "#2D9CDB",
-        }
-
     result_rows = session.results.to_dict(orient="records")
+    try:
+        fastf1_laps = session.laps
+    except DataNotLoadedError:
+        if session_code != "R":
+            raise
+        fastf1_laps = None
+
+    if fastf1_laps is None or fastf1_laps.empty:
+        if session_code != "R":
+            return {"drivers": [], "laps": []}
+        raw_laps = _get_ergast_race_laps(
+            parsed_season,
+            parsed_round,
+            result_rows,
+        )
+        if not raw_laps:
+            return {"drivers": [], "laps": []}
+        logger.warning(
+            "FastF1 race timing data is unavailable; using Ergast lap times",
+            extra={
+                "season": parsed_season,
+                "round": parsed_round,
+                "lap_count": len(raw_laps),
+            },
+        )
+        compound_colors = {"UNKNOWN": "#969BA5"}
+    else:
+        raw_laps = fastf1_laps.to_dict(orient="records")
+        try:
+            compound_colors = fastf1.plotting.get_compound_mapping(session)
+        except Exception:
+            # Some older or incomplete timing feeds do not identify the event year.
+            compound_colors = {
+                "SOFT": "#E10600",
+                "MEDIUM": "#F2CE22",
+                "HARD": "#F2F2F2",
+                "INTERMEDIATE": "#38B449",
+                "WET": "#2D9CDB",
+            }
+    if not raw_laps:
+        return {"drivers": [], "laps": []}
+
     drivers: list[LapDriver] = []
     known_codes: set[str] = set()
     for row in result_rows:
@@ -709,7 +740,6 @@ def get_session_laps(
         )
         known_codes.add(code)
 
-    raw_laps = session.laps.to_dict(orient="records")
     laps: list[LapPoint] = []
     for row in raw_laps:
         code = format_value(row.get("Driver"))
@@ -785,6 +815,71 @@ def _classification_driver_code(row: dict[str, Any]) -> str:
     return format_value(row.get("Abbreviation")) or format_value(
         row.get("DriverNumber")
     )
+
+
+def _get_ergast_race_laps(
+    season: int,
+    round_number: int,
+    result_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return race laps from Ergast when FastF1 timing data did not load.
+
+    Ergast provides race lap times but not tyre compounds or pit-lap flags, so
+    the returned records use unknown compounds and let the normal per-driver
+    pace check classify slow laps.
+
+    Args:
+        season: Championship season containing the event.
+        round_number: Event round in that season.
+        result_rows: FastF1 classification rows used to map driver IDs and teams.
+
+    Returns:
+        Ergast lap records in the field format expected by ``get_session_laps``.
+    """
+    driver_codes: dict[str, str] = {}
+    team_names: dict[str, str] = {}
+    for row in result_rows:
+        driver_id = format_value(row.get("DriverId"))
+        code = _classification_driver_code(row)
+        if not driver_id or not code:
+            continue
+        driver_codes[driver_id] = code
+        team_names[code] = format_value(row.get("TeamName"))
+
+    response = ergast.get_lap_times(
+        season,
+        round_number,
+        result_type="pandas",
+        limit=100,
+    )
+    lap_rows: list[dict[str, Any]] = []
+    while True:
+        for table in response.content:
+            for row in table.to_dict(orient="records"):
+                driver_id = format_value(row.get("driverId"))
+                code = driver_codes.get(driver_id, "")
+                lap_number = _lap_count(row.get("number"))
+                seconds = _time_seconds(row.get("time"))
+                if not code or lap_number is None or seconds is None or seconds <= 0:
+                    continue
+                lap_rows.append(
+                    {
+                        "Driver": code,
+                        "LapNumber": lap_number,
+                        "LapTime": row.get("time"),
+                        "Compound": "UNKNOWN",
+                        "IsAccurate": True,
+                        "Deleted": False,
+                        "PitInTime": None,
+                        "PitOutTime": None,
+                        "Team": team_names.get(code, ""),
+                    }
+                )
+        try:
+            response = response.get_next_result_page()
+        except ValueError:
+            break
+    return lap_rows
 
 
 @lru_cache(maxsize=128)
