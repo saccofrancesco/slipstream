@@ -594,10 +594,11 @@ class EventState(rx.State):
             and not self.laps_loaded
             and not self.laps_loading
         ):
-            async for update in self._load_laps(
+            self.laps_loading = True
+            self.laps_error = ""
+            yield EventState.load_laps(
                 self.selected_session, self._event_request_generation
-            ):
-                yield update
+            )
         if (
             tab == "telemetry"
             and self.selected_laps
@@ -826,7 +827,7 @@ class EventState(rx.State):
     @rx.event
     async def select_session(
         self, session_code: str
-    ) -> AsyncGenerator[None, None]:
+    ) -> AsyncGenerator[EventSpec | None, None]:
         """Replace the visible classification with a selected session's rows.
 
         Args:
@@ -866,18 +867,21 @@ class EventState(rx.State):
             return
         self.loading = False
         if self.active_tab == "laps":
-            async for update in self._load_laps(session_code, request_generation):
-                yield update
+            yield EventState.load_laps(session_code, request_generation)
 
-    async def _load_laps(
-        self, session_code: str, request_generation: int
-    ) -> AsyncGenerator[None, None]:
+    @rx.event(background=True)
+    async def load_laps(self, session_code: str, request_generation: int) -> None:
         """Fetch the selected session's timed laps without blocking the UI."""
-        route_season: str = self.event_season
-        route_round: str = self.round_number
-        self.laps_loading = True
-        self.laps_error = ""
-        yield
+        async with self:
+            route_season: str = self.event_season
+            route_round: str = self.round_number
+            if not self._event_request_is_current(
+                request_generation, route_season, route_round, session_code
+            ):
+                return
+            self.laps_loading = True
+            self.laps_error = ""
+
         try:
             data: SessionLaps = await asyncio.to_thread(
                 get_cached_session_laps,
@@ -886,24 +890,28 @@ class EventState(rx.State):
                 session_code,
             )
         except Exception:
-            if not self._event_request_is_current(
-                request_generation, route_season, route_round, session_code
-            ):
-                return
-            logger.exception(
-                "Could not load session lap times",
-                extra={
-                    "season": route_season,
-                    "round": route_round,
-                    "session": session_code,
-                },
-            )
-            self.lap_drivers = []
-            self.lap_points = []
-            self.laps_error = (
-                "Could not load this session's lap times. Please try again."
-            )
-        else:
+            async with self:
+                if not self._event_request_is_current(
+                    request_generation, route_season, route_round, session_code
+                ):
+                    return
+                logger.exception(
+                    "Could not load session lap times",
+                    extra={
+                        "season": route_season,
+                        "round": route_round,
+                        "session": session_code,
+                    },
+                )
+                self.lap_drivers = []
+                self.lap_points = []
+                self.laps_error = (
+                    "Could not load this session's lap times. Please try again."
+                )
+                self.laps_loading = False
+            return
+
+        async with self:
             if not self._event_request_is_current(
                 request_generation, route_season, route_round, session_code
             ):
@@ -911,11 +919,7 @@ class EventState(rx.State):
             self.lap_drivers = data["drivers"]
             self.lap_points = data["laps"]
             self.laps_loaded = bool(data["laps"])
-        finally:
-            if self._event_request_is_current(
-                request_generation, route_season, route_round, session_code
-            ):
-                self.laps_loading = False
+            self.laps_loading = False
 
     async def _load_classification(
         self, session_code: str, request_generation: int
