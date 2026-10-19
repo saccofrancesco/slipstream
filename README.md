@@ -9,7 +9,7 @@
   </a>
 </p>
 
-<h4 align="center">A Formula 1 results dashboard for race weekends, championship standings, session classifications, and lap times — built with <a href="https://reflex.dev">Reflex</a> and powered by <a href="https://docs.fastf1.dev">FastF1</a>.</h4>
+<h4 align="center">A Formula 1 results dashboard for race weekends, championship standings, session classifications, lap times, and telemetry — built with <a href="https://reflex.dev">Reflex</a> and powered by <a href="https://docs.fastf1.dev">FastF1</a> and <a href="https://openf1.org/">OpenF1</a>.</h4>
 
 <p align="center"><a href="https://slipstream-lime-star.reflex.run"><strong>🌐 Try Slipstream live</strong></a></p>
 
@@ -71,6 +71,12 @@ reflex run
 
 Open **http://localhost:3000** once Reflex starts. On Windows, activate the virtual environment with `.venv\Scripts\activate` before installing dependencies.
 
+Completed sessions from 2023 onward use OpenF1's free historical API for lap
+times, tyre compounds, car telemetry, and track positions. OpenF1 makes a
+session available without authentication roughly 30 minutes after it ends.
+Older events retain the FastF1 and Ergast fallbacks, where less detailed data
+may be available.
+
 ---
 
 ## 📬 Emailware: Share Your Thoughts
@@ -99,7 +105,8 @@ Slipstream uses the following libraries and data sources:
 * [Reflex](https://reflex.dev/)
 * [FastF1](https://docs.fastf1.dev/)
 * [Ergast API via FastF1](https://docs.fastf1.dev/ergast.html) for calendars and standings
-* [Formula 1 timing data via FastF1](https://docs.fastf1.dev/core.html) for session results and laps
+* [OpenF1](https://openf1.org/) for free historical lap, tyre, telemetry, and position data from 2023 onward
+* [Formula 1 timing data via FastF1](https://docs.fastf1.dev/core.html) as a fallback where available
 
 ---
 
