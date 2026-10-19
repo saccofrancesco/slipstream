@@ -26,10 +26,19 @@ def navbar_icon_item(
     """
     # Use text color to show interaction states without adding a background fill.
     return rx.link(
-        rx.hstack(rx.icon(icon), rx.text(text, size="4", weight="medium")),
+        rx.hstack(
+            rx.icon(icon),
+            rx.text(
+                text,
+                size="4",
+                weight="medium",
+                display=rx.breakpoints(initial="none", md="block"),
+            ),
+        ),
         href=url,
+        aria_label=text,
         underline="none",
-        padding_x="2",
+        padding_x=rx.breakpoints(initial="1", md="2"),
         padding_y="1",
         border_radius="full",
         color=rx.color("accent", 11) if active else "inherit",
@@ -63,11 +72,17 @@ def navbar(active_section: str | None = None) -> rx.Component:
                                 "/icons/light.svg", "/icons/dark.svg"
                             ),
                             alt="",
-                            width="7rem",
+                            width=rx.breakpoints(initial="5rem", md="7rem"),
                             height="auto",
                         ),
-                        rx.heading("SLIPSTREAM", as_="h2", size="7", weight="bold"),
+                        rx.heading(
+                            "SLIPSTREAM",
+                            as_="h2",
+                            size=rx.breakpoints(initial="5", md="7"),
+                            weight="bold",
+                        ),
                         align="center",
+                        spacing=rx.breakpoints(initial="2", md="3"),
                     ),
                     href="/",
                     underline="none",
@@ -94,7 +109,21 @@ def navbar(active_section: str | None = None) -> rx.Component:
                     navbar_icon_item(
                         "TEAMS", "users", "/constructors", active_section == "teams"
                     ),
-                    spacing="6",
+                    rx.color_mode.button(
+                        allow_system=True,
+                        size="2",
+                        variant="ghost",
+                        aria_label="Choose color theme",
+                        title="Choose color theme",
+                        style={
+                            "align_self": "center",
+                            "display": "flex",
+                            "align_items": "center",
+                            "justify_content": "center",
+                        },
+                    ),
+                    spacing=rx.breakpoints(initial="1", md="4"),
+                    align="center",
                 ),
                 justify="between",
                 align="center",
