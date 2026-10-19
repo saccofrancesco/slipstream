@@ -164,17 +164,21 @@ def podium_styles(
     # Use medal colors for the top three ranks and the default text color otherwise.
     number_color: rx.Var[str] = rx.cond(
         first,
-        "#E2C15A",
-        rx.cond(second, "#C5CED8", rx.cond(third, "#CC8950", "inherit")),
+        rx.color("gold", 11),
+        rx.cond(
+            second,
+            rx.color("gray", 11),
+            rx.cond(third, rx.color("bronze", 11), "inherit"),
+        ),
     )
     # Match each podium card's border to its rank, with a neutral fallback.
     border_color: rx.Var[str] = rx.cond(
         first,
-        "#E2C15A",
+        rx.color("gold", 8),
         rx.cond(
             second,
-            "#C5CED8",
-            rx.cond(third, "#CC8950", rx.color("gray", 5)),
+            rx.color("gray", 8),
+            rx.cond(third, rx.color("bronze", 8), rx.color("gray", 5)),
         ),
     )
     return number_color, border_color
