@@ -170,7 +170,9 @@ def _lap_strip_time_cell(
         background_color=rx.color("gray", 3),
         border_width=rx.cond(cell["fastest"], "2px", "1px"),
         border_style="solid",
-        border_color=rx.cond(cell["fastest"], "#0A9800", rx.color("gray", 5)),
+        border_color=rx.cond(
+            cell["fastest"], rx.color("green", 9), rx.color("gray", 5)
+        ),
         border_radius="0.625rem",
         box_sizing="border-box",
         color=rx.color("gray", 12),
@@ -575,7 +577,7 @@ def laps_section(
                                     ),
                                     rx.recharts.graphing_tooltip(
                                         cursor={
-                                            "stroke": "rgba(255,255,255,0.55)",
+                                            "stroke": "var(--gray-8)",
                                             "strokeWidth": 1,
                                             "strokeDasharray": "4 4",
                                         },
