@@ -271,7 +271,7 @@ export function Trackmap({
           d={fullPath}
           pathLength="1"
           fill="none"
-          stroke="white"
+          stroke="var(--gray-12)"
           strokeWidth={outlineWidth}
           strokeLinecap="round"
           strokeLinejoin="round"
@@ -301,7 +301,7 @@ export function Trackmap({
                 cy={corner.labelY}
                 r={markerRadius}
                 fill="var(--gray-2)"
-                stroke="white"
+                stroke="var(--gray-12)"
                 strokeWidth={scale * 0.0025}
               />
               <text
@@ -309,7 +309,7 @@ export function Trackmap({
                 y={corner.labelY}
                 dy="0.34em"
                 textAnchor="middle"
-                fill="white"
+                fill="var(--gray-12)"
                 fontSize={markerFontSize}
                 fontWeight="700"
               >
@@ -324,7 +324,7 @@ export function Trackmap({
           cx={positionMarker.x}
           cy={positionMarker.y}
           r={positionMarkerRadius}
-          fill="white"
+          fill="var(--gray-12)"
           aria-hidden="true"
         />
         <TrackmapPlaybackDots
