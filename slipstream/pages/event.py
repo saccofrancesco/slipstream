@@ -177,7 +177,7 @@ class EventState(rx.State):
 
     @rx.var
     def driver_chips(self) -> list[DriverChip]:
-        """Mark selections and use white for a selected teammate's line."""
+        """Mark selections and use a neutral color for selected teammate lines."""
         first_by_team: dict[str, str] = {}
         for code in self.selected_drivers:
             driver = next(
@@ -205,7 +205,7 @@ class EventState(rx.State):
                         "plot_color": (
                             team_color
                             if first_by_team.get(team) == driver["code"]
-                            else "#FFFFFF"
+                            else "var(--gray-12)"
                         ),
                         "selected_fill": (
                             f"color-mix(in srgb, {team_color} 22%, transparent)"
@@ -397,13 +397,15 @@ class EventState(rx.State):
             metadata = driver_by_code.get(driver)
             team = (metadata["team"] or driver) if metadata else driver
             if driver not in color_by_driver:
-                team_color = metadata["team_color"] if metadata else "#FFFFFF"
+                team_color = (
+                    metadata["team_color"] if metadata else "var(--gray-12)"
+                )
                 if driver in active_chip_colors:
                     color = active_chip_colors[driver]
                 elif team in first_selected_by_team:
-                    color = "#FFFFFF"
+                    color = "var(--gray-12)"
                 elif team in first_plotted_by_team:
-                    color = "#FFFFFF"
+                    color = "var(--gray-12)"
                 else:
                     color = team_color
                 first_plotted_by_team.add(team)
@@ -499,7 +501,7 @@ class EventState(rx.State):
                 {
                     "start_index": start_index,
                     "end_index": end_index,
-                    "color": colors.get(winner_key, "#FFFFFF"),
+                    "color": colors.get(winner_key, "var(--gray-12)"),
                     "winner": winner,
                 }
             )
