@@ -32,6 +32,22 @@ from .openf1 import (
 SAMPLE_SPACING_METRES: int = 5
 MINI_SECTOR_COUNT: int = 50
 MAX_SELECTED_TELEMETRY_LAPS: int = 4
+TRACK_ROTATION_ADJUSTMENTS: dict[str, float] = {
+    "Albert Park Grand Prix Circuit": -90.0,
+    "Shanghai International Circuit": -115.0,
+    "Suzuka Circuit": -48.0,
+    "Circuit Gilles Villeneuve": -126.5,
+    "Circuit de Barcelona-Catalunya": 114.5,
+    "Red Bull Ring": -23.0,
+    "Circuit de Spa-Francorchamps": -173.0,
+    "Hungaroring": 10.0,
+    "Circuit Park Zandvoort": -179.0,
+    "Autodromo Nazionale di Monza": 170.5,
+    "Madring": 148.0,
+    "Baku City Circuit": 56.0,
+    "Sepang International Circuit": -159.5,
+    "Marina Bay Street Circuit": 26.0,
+}
 _SESSION_LOCK: Lock = Lock()
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -396,6 +412,7 @@ def _track_geometry(
     grid: np.ndarray,
     available: list[_LapSamples],
     sampled: dict[str, dict[str, np.ndarray]],
+    circuit_name: str,
 ) -> tuple[
     list[TelemetryTrackPoint],
     list[TelemetryTrackSegment],
@@ -432,12 +449,13 @@ def _track_geometry(
     trace_y = np.interp(grid_session_time, position_times, position_y)
 
     circuit_info = None
-    rotation = 0.0
-    preserve_orientation = False
+    # Positive values are clockwise in FastF1's coordinate system.
+    rotation = TRACK_ROTATION_ADJUSTMENTS.get(circuit_name, 0.0)
+    preserve_orientation = circuit_name in TRACK_ROTATION_ADJUSTMENTS
     try:
         circuit_info = session.get_circuit_info()
         if circuit_info is not None and isfinite(float(circuit_info.rotation)):
-            rotation = float(circuit_info.rotation)
+            rotation += float(circuit_info.rotation)
             preserve_orientation = True
     except Exception:
         # Position data is still useful when the optional circuit metadata fails.
@@ -567,6 +585,7 @@ def _get_fastf1_session_telemetry(
     round_number: int,
     session_code: str,
     selected_laps: tuple[tuple[str, int], ...],
+    circuit_name: str,
 ) -> SessionTelemetry:
     """Load the legacy FastF1 telemetry fallback for one session."""
     session = _session(season, round_number, session_code)
@@ -610,7 +629,7 @@ def _get_fastf1_session_telemetry(
         track_corners,
         preserve_orientation,
     ) = _track_geometry(
-        session, baseline, grid, available, sampled
+        session, baseline, grid, available, sampled, circuit_name
     )
     baseline_elapsed = sampled[baseline.key]["elapsed"]
     rows: list[dict[str, float | int]] = []
@@ -662,6 +681,7 @@ def _openf1_track_geometry(
     sampled: dict[str, dict[str, np.ndarray]],
     locations: list[OpenF1LocationSample],
     circuit_info: CircuitInfo | None,
+    circuit_name: str,
 ) -> tuple[
     list[TelemetryTrackPoint],
     list[TelemetryTrackSegment],
@@ -695,10 +715,11 @@ def _openf1_track_geometry(
     grid_session_time = np.interp(grid, baseline.distance, baseline.session_time)
     trace_x = np.interp(grid_session_time, position_times, position_x)
     trace_y = np.interp(grid_session_time, position_times, position_y)
-    rotation = 0.0
-    preserve_orientation = False
+    # Positive values are clockwise in FastF1's coordinate system.
+    rotation = TRACK_ROTATION_ADJUSTMENTS.get(circuit_name, 0.0)
+    preserve_orientation = circuit_name in TRACK_ROTATION_ADJUSTMENTS
     if circuit_info is not None and isfinite(float(circuit_info.rotation)):
-        rotation = float(circuit_info.rotation)
+        rotation += float(circuit_info.rotation)
         preserve_orientation = True
     trace_x, trace_y = _rotate_coordinates(trace_x, trace_y, rotation)
 
@@ -813,6 +834,7 @@ def _get_openf1_session_telemetry(
     round_number: int,
     session_code: str,
     selected_laps: tuple[tuple[str, int], ...],
+    circuit_name: str,
 ) -> SessionTelemetry:
     """Load free OpenF1 car and position data for selected historical laps."""
     available: list[_LapSamples] = []
@@ -879,7 +901,7 @@ def _get_openf1_session_telemetry(
         track_corners,
         preserve_orientation,
     ) = _openf1_track_geometry(
-        baseline, grid, available, sampled, locations, circuit_info
+        baseline, grid, available, sampled, locations, circuit_info, circuit_name
     )
     baseline_elapsed = sampled[baseline.key]["elapsed"]
     rows: list[dict[str, float | int]] = []
@@ -929,6 +951,7 @@ def get_session_telemetry(
     round_number: int | str,
     session_code: str,
     selected_laps: list[tuple[str, int]],
+    circuit_name: str = "",
 ) -> SessionTelemetry:
     """Load selected laps from OpenF1, with FastF1 as an archive fallback."""
     coordinates = parse_event_coordinates(season, round_number)
@@ -946,7 +969,11 @@ def get_session_telemetry(
     if parsed_season >= OPENF1_FIRST_HISTORICAL_SEASON:
         try:
             return _get_openf1_session_telemetry(
-                parsed_season, parsed_round, session_code, unique_laps
+                parsed_season,
+                parsed_round,
+                session_code,
+                unique_laps,
+                circuit_name,
             )
         except Exception:
             logger.warning(
@@ -959,5 +986,9 @@ def get_session_telemetry(
                 },
             )
     return _get_fastf1_session_telemetry(
-        parsed_season, parsed_round, session_code, unique_laps
+        parsed_season,
+        parsed_round,
+        session_code,
+        unique_laps,
+        circuit_name,
     )
