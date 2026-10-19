@@ -6,6 +6,7 @@ import reflex as rx
 # Enable the plugins that provide site maps, Tailwind styles, and Radix themes.
 config: rx.Config = rx.Config(
     app_name="slipstream",
+    default_color_mode="system",
     plugins=[
         rx.plugins.SitemapPlugin(),
         rx.plugins.TailwindV4Plugin(),
