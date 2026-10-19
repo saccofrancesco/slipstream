@@ -24,6 +24,11 @@ from .flags import (
     flag_for_driver_country_code,
     flag_for_nationality,
 )
+from .openf1 import (
+    OPENF1_FIRST_HISTORICAL_SEASON,
+    OpenF1SessionData,
+    get_openf1_session_data,
+)
 
 # Keep FastF1's unbounded parsed cache disabled. The application-level cache in
 # cached.py applies explicit freshness windows to normalized provider results.
@@ -148,7 +153,7 @@ class LapPoint(TypedDict):
 
 
 class SessionLaps(TypedDict):
-    """Display-ready drivers and laps from one FastF1 session."""
+    """Display-ready drivers and laps from one archive session."""
 
     drivers: list[LapDriver]
     laps: list[LapPoint]
@@ -164,6 +169,15 @@ EVENT_SESSION_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("Sprint", "S", "Sprint"),
     ("Qualifying", "Q", "Qualifying"),
 )
+
+COMPOUND_COLORS: dict[str, str] = {
+    "SOFT": "#E10600",
+    "MEDIUM": "#F2CE22",
+    "HARD": "#F2F2F2",
+    "INTERMEDIATE": "#38B449",
+    "WET": "#2D9CDB",
+    "UNKNOWN": "#969BA5",
+}
 
 
 def get_available_seasons(start_year: int = 1950) -> list[str]:
@@ -624,7 +638,12 @@ def has_session_results(
     parsed_season, parsed_round = coordinates
 
     session: Session = fastf1.get_session(parsed_season, parsed_round, session_code)
-    session.load(laps=False, telemetry=False, weather=False, messages=False)
+    session.load(
+        laps=False,
+        telemetry=False,
+        weather=False,
+        messages=False,
+    )
     return not session.results.empty
 
 
@@ -645,6 +664,75 @@ def _quick_lap_threshold(lap_times: list[float]) -> float | None:
         return None
     quick_count = max(3, ceil(len(lap_times) * 0.1))
     return median(sorted(lap_times)[:quick_count]) * 1.07
+
+
+def _flag_slow_laps(drivers: list[LapDriver], laps: list[LapPoint]) -> None:
+    """Add the per-driver 107% outlier flag to normalized lap rows."""
+    for driver in drivers:
+        driver_laps = [lap for lap in laps if lap["driver"] == driver["code"]]
+        baseline = [lap["seconds"] for lap in driver_laps if not lap["outlier"]]
+        threshold = _quick_lap_threshold(baseline)
+        if threshold is not None:
+            for lap in driver_laps:
+                lap["outlier"] = lap["outlier"] or lap["seconds"] > threshold
+
+
+def _normalize_openf1_laps(data: OpenF1SessionData) -> SessionLaps:
+    """Convert OpenF1 timing and stint rows to the existing Laps-tab contract."""
+    drivers: list[LapDriver] = [
+        {
+            "code": driver["code"],
+            "name": driver["full_name"],
+            "team": driver["team_name"],
+            "team_color": driver["team_color"],
+        }
+        for driver in data["drivers"]
+    ]
+    codes_by_number = {
+        driver["driver_number"]: driver["code"] for driver in data["drivers"]
+    }
+    stints_by_driver: dict[int, list[tuple[int, int, str]]] = {}
+    for stint in data["stints"]:
+        stints_by_driver.setdefault(stint["driver_number"], []).append(
+            (stint["lap_start"], stint["lap_end"], stint["compound"])
+        )
+
+    laps: list[LapPoint] = []
+    for row in data["laps"]:
+        code = codes_by_number.get(row["driver_number"], "")
+        if not code:
+            continue
+        compound = next(
+            (
+                name
+                for start, end, name in stints_by_driver.get(
+                    row["driver_number"], []
+                )
+                if start <= row["lap_number"] <= end
+            ),
+            "UNKNOWN",
+        )
+        seconds = row["lap_duration"]
+        laps.append(
+            {
+                "driver": code,
+                "number": row["lap_number"],
+                "seconds": seconds,
+                "time": _format_classification_time(timedelta(seconds=seconds)),
+                "compound": compound,
+                "compound_color": COMPOUND_COLORS.get(
+                    compound, COMPOUND_COLORS["UNKNOWN"]
+                ),
+                "outlier": row["is_pit_out_lap"],
+            }
+        )
+
+    _flag_slow_laps(drivers, laps)
+    timed_codes = {lap["driver"] for lap in laps}
+    return {
+        "drivers": [driver for driver in drivers if driver["code"] in timed_codes],
+        "laps": laps,
+    }
 
 
 def get_session_laps(
@@ -671,8 +759,37 @@ def get_session_laps(
     if session_code not in {"FP1", "FP2", "FP3", "SQ", "SS", "S", "Q", "R"}:
         raise ValueError("The requested session is not supported.")
 
+    if parsed_season >= OPENF1_FIRST_HISTORICAL_SEASON:
+        try:
+            openf1_laps = _normalize_openf1_laps(
+                get_openf1_session_data(
+                    parsed_season,
+                    parsed_round,
+                    session_code,
+                )
+            )
+            if openf1_laps["laps"]:
+                return openf1_laps
+        except Exception:
+            # Keep cached/local FastF1 data and the Ergast race feed as
+            # resilience paths when OpenF1 is temporarily unavailable.
+            logger.warning(
+                "OpenF1 lap data is unavailable; trying archive fallbacks",
+                exc_info=True,
+                extra={
+                    "season": parsed_season,
+                    "round": parsed_round,
+                    "session": session_code,
+                },
+            )
+
     session: Session = fastf1.get_session(parsed_season, parsed_round, session_code)
-    session.load(laps=True, telemetry=False, weather=False, messages=False)
+    session.load(
+        laps=True,
+        telemetry=False,
+        weather=False,
+        messages=False,
+    )
     result_rows = session.results.to_dict(orient="records")
     try:
         fastf1_laps = session.laps
@@ -706,13 +823,7 @@ def get_session_laps(
             compound_colors = fastf1.plotting.get_compound_mapping(session)
         except Exception:
             # Some older or incomplete timing feeds do not identify the event year.
-            compound_colors = {
-                "SOFT": "#E10600",
-                "MEDIUM": "#F2CE22",
-                "HARD": "#F2F2F2",
-                "INTERMEDIATE": "#38B449",
-                "WET": "#2D9CDB",
-            }
+            compound_colors = COMPOUND_COLORS
     if not raw_laps:
         return {"drivers": [], "laps": []}
 
@@ -785,13 +896,7 @@ def get_session_laps(
 
     # Use clean quick laps as the pace reference so prolonged rain or other
     # slow periods cannot stretch the chart's default time range.
-    for driver in drivers:
-        driver_laps = [lap for lap in laps if lap["driver"] == driver["code"]]
-        baseline = [lap["seconds"] for lap in driver_laps if not lap["outlier"]]
-        threshold = _quick_lap_threshold(baseline)
-        if threshold is not None:
-            for lap in driver_laps:
-                lap["outlier"] = lap["outlier"] or lap["seconds"] > threshold
+    _flag_slow_laps(drivers, laps)
 
     timed_codes = {lap["driver"] for lap in laps}
     return {
