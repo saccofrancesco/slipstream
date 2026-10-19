@@ -302,7 +302,7 @@ def _telemetry_chart(
         telemetry_playback_line(distance_metres=distance_metres),
         rx.recharts.graphing_tooltip(
             cursor={
-                "stroke": "rgba(255,255,255,0.65)",
+                "stroke": "var(--gray-8)",
                 "strokeWidth": 1,
                 "strokeDasharray": "4 4",
             },
