@@ -3,24 +3,26 @@
 # Reflex provides the UI component and page registration APIs.
 import reflex as rx
 
-# Reuse the shared layout and site navigation.
-from slipstream.components import container, navbar
+# Reuse the shared layout, site navigation, and landing-page presentation.
+from slipstream.components import container, home_destinations, home_hero, navbar
 
 
-@rx.page("/", "Home")
+@rx.page("/", "Slipstream — Formula 1 race intelligence")
 def index() -> rx.Component:
-    """Render the landing page and its welcome heading.
+    """Render the Slipstream landing page.
 
     Returns:
-        The home page with shared navigation and centered welcome text.
+        The home page with its hero and primary section links.
     """
     return rx.vstack(
         navbar(),
         container(
-            rx.center(
-                rx.heading("WELCOME TO SLIPSTREAM", as_="h1", size="9"),
+            rx.vstack(
+                home_hero(),
+                home_destinations(),
+                align="stretch",
+                spacing="8",
                 width="100%",
-                min_height="calc(100vh - 5rem)",
             ),
         ),
         width="100%",
