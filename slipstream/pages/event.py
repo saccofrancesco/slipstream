@@ -627,6 +627,7 @@ class EventState(rx.State):
                 self.round_number,
                 self.selected_session,
                 requested_laps,
+                self.event.get("circuit_name", ""),
             )
         except Exception:
             if self._telemetry_selection_key() == request_key:
