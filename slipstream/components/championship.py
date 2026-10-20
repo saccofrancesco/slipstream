@@ -1,8 +1,11 @@
 """Build championship standings sections and feedback panels."""
 
+from typing import Literal
+
 import reflex as rx
 
-from .layout import loading_card, status_card
+from .layout import container, loading_card, page_header, status_card
+from .navbar import navbar
 from .standing import standing
 
 
@@ -18,6 +21,7 @@ def podium_section(
     Returns:
         A section heading followed by the featured standing cards.
     """
+
     # Give the podium a typed renderer so each reactive entry is explicit.
     def render_podium_entry(entry: rx.Var[dict[str, str]]) -> rx.Component:
         """Wrap one featured standing card with podium spacing.
@@ -79,6 +83,7 @@ def leaderboard_section(
     Returns:
         A section heading followed by the remaining standings rows.
     """
+
     # Render each reactive entry using the regular, non-featured card layout.
     def render_standing(entry: rx.Var[dict[str, str]]) -> rx.Component:
         """Build one regular row in the standings leaderboard.
@@ -154,9 +159,48 @@ def championship_section(
             rx.cond(
                 has_standings,
                 standings_content,
-                status_card(
-                    "Standings unavailable", "No standings are available yet."
-                ),
+                status_card("Standings unavailable", "No standings are available yet."),
             ),
         ),
+    )
+
+
+def championship_page(
+    podium: rx.Var[list[dict[str, str]]],
+    remaining: rx.Var[list[dict[str, str]]],
+    has_remaining: rx.Var[bool],
+    has_standings: rx.Var[bool],
+    loading: rx.Var[bool],
+    error: rx.Var[str],
+    *,
+    active_section: Literal["drivers", "teams"],
+    eyebrow: str,
+    title: str,
+    description: str,
+    is_driver: bool,
+) -> rx.Component:
+    """Render the shared responsive page shell for a championship route."""
+    return rx.vstack(
+        navbar(active_section=active_section),
+        container(
+            rx.vstack(
+                page_header(eyebrow, title, description),
+                championship_section(
+                    podium,
+                    remaining,
+                    has_remaining,
+                    has_standings,
+                    loading,
+                    error,
+                    is_driver=is_driver,
+                ),
+                align="stretch",
+                spacing="6",
+                width="100%",
+            ),
+        ),
+        width="100%",
+        align="center",
+        min_height="100vh",
+        spacing="0",
     )

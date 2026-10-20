@@ -1,6 +1,7 @@
 """Components for the featured weekend and the past-race archive."""
 
 import reflex as rx
+
 from slipstream.services import PastEvent, ScheduleDay, ScheduledSession
 
 from .flag import flag_icon
@@ -139,9 +140,7 @@ def race_weekend_card(
                     rx.cond(
                         weekend["country_flag"] != "",
                         rx.box(
-                            flag_icon(
-                                weekend["country_flag"], weekend["country"]
-                            ),
+                            flag_icon(weekend["country_flag"], weekend["country"]),
                             font_size="2rem",
                             line_height="1",
                             flex_shrink="0",
@@ -364,9 +363,7 @@ def event_header(event: rx.Var[dict[str, str]]) -> rx.Component:
     )
 
 
-def _past_event_card(
-    event: rx.Var[PastEvent], season: rx.Var[str]
-) -> rx.Component:
+def _past_event_card(event: rx.Var[PastEvent], season: rx.Var[str]) -> rx.Component:
     """Render one compact archive entry as a full-card event link."""
     return rx.link(
         rx.card(

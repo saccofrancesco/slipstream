@@ -1,9 +1,12 @@
 """Session lap chart and its driver, compound, and outlier controls."""
 
+import json
 from typing import TypedDict
 
 import reflex as rx
 from reflex.vars.function import FunctionStringVar
+
+from slipstream.services.catalog import TYRE_ICON_PATHS
 
 from .layout import loading_card, status_card
 
@@ -337,7 +340,9 @@ def _driver_chip(chip: rx.Var[DriverChip], on_toggle: rx.EventHandler) -> rx.Com
         border_style="solid",
         border_color=chip["team_color"],
         border_width="1px",
-        background_color=rx.cond(chip["selected"], chip["selected_fill"], "transparent"),
+        background_color=rx.cond(
+            chip["selected"], chip["selected_fill"], "transparent"
+        ),
         _hover={"background_color": chip["selected_fill"]},
         aria_pressed=chip["selected"],
         cursor="pointer",
@@ -394,13 +399,7 @@ def _lap_tooltip_formatter() -> rx.Var:
                     (key) => key.startsWith(markerPrefix) && row[key] != null
                 );
                 const compound = markerKey ? markerKey.slice(markerPrefix.length) : "";
-                const tyreIcons = {
-                    SOFT: "/tyres/soft.svg",
-                    MEDIUM: "/tyres/medium.svg",
-                    HARD: "/tyres/hard.svg",
-                    INTERMEDIATE: "/tyres/intermediate.svg",
-                    WET: "/tyres/wet.svg",
-                };
+                const tyreIcons = __TYRE_ICON_PATHS__;
                 const tyreIcon = tyreIcons[compound];
                 const ms = Math.round(Number(value) * 1000);
                 const minutes = Math.floor(ms / 60000);
@@ -454,7 +453,9 @@ def _lap_tooltip_formatter() -> rx.Var:
                     children,
                 }), null];
             }
-        """
+        """.replace(
+            "__TYRE_ICON_PATHS__", json.dumps(TYRE_ICON_PATHS, separators=(",", ":"))
+        )
     )
 
 
@@ -478,7 +479,7 @@ def laps_section(
 ) -> rx.Component:
     """Render the selected session's controls and interactive lap chart."""
     tooltip_formatter = _lap_tooltip_formatter()
-    tooltip_lap_formatter = rx.Var(_js_expr='(value) => `Lap ${value}`')
+    tooltip_lap_formatter = rx.Var(_js_expr="(value) => `Lap ${value}`")
 
     return rx.vstack(
         rx.hstack(
@@ -496,7 +497,9 @@ def laps_section(
             ),
             rx.spacer(),
             rx.hstack(
-                rx.switch(checked=show_outliers, on_change=on_outliers_change, size="2"),
+                rx.switch(
+                    checked=show_outliers, on_change=on_outliers_change, size="2"
+                ),
                 rx.text("Show outliers", size="2", weight="medium"),
                 align="center",
                 spacing="2",
@@ -527,7 +530,9 @@ def laps_section(
                                 rx.grid(
                                     rx.foreach(
                                         chips,
-                                        lambda chip: _driver_chip(chip, on_toggle_driver),
+                                        lambda chip: _driver_chip(
+                                            chip, on_toggle_driver
+                                        ),
                                     ),
                                     grid_template_columns="repeat(2, 3.75rem)",
                                     gap="0.5rem",
@@ -618,7 +623,12 @@ def laps_section(
                                     data=chart_data,
                                     width="100%",
                                     height=440,
-                                    margin={"top": 8, "right": 20, "left": 6, "bottom": 20},
+                                    margin={
+                                        "top": 8,
+                                        "right": 20,
+                                        "left": 6,
+                                        "bottom": 20,
+                                    },
                                 ),
                                 rx.cond(
                                     selected_count == 0,

@@ -32,7 +32,6 @@ class TelemetryLine(TypedDict):
 
     key: str
     label: str
-    time: str
     color: str
     dash: str
     baseline: bool
@@ -138,7 +137,7 @@ def _tooltip_formatter(metric: str) -> rx.Var:
         "delta": '`${Number(value) > 0 ? "+" : ""}${Number(value).toFixed(3)} s`',
         "throttle": "`${Math.round(Number(value))}%`",
         "brake": '`${Number(value) >= 0.5 ? "1" : "0"}`',
-        "rpm": '`${Math.round(Number(value)).toLocaleString()} RPM`',
+        "rpm": "`${Math.round(Number(value)).toLocaleString()} RPM`",
         "gear": "`${Math.round(Number(value))}`",
     }
     return rx.Var(
@@ -268,7 +267,7 @@ def _telemetry_chart(
             tick_line=False,
             tick_count=7,
             height=24,
-            tick_formatter='(value) => `${(value / 1000).toFixed(1)}`',
+            tick_formatter="(value) => `${(value / 1000).toFixed(1)}`",
             stroke=rx.color("gray", 10),
         ),
         rx.recharts.y_axis(
@@ -327,7 +326,7 @@ def _telemetry_chart(
             custom_attrs={
                 "formatter": _tooltip_formatter(metric),
                 "labelFormatter": rx.Var(
-                    _js_expr='(value) => `${Math.round(value)} m`'
+                    _js_expr="(value) => `${Math.round(value)} m`"
                 ),
             },
         ),
