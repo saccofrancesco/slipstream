@@ -3,6 +3,8 @@
 # Reflex provides the configuration and plugin interfaces used below.
 import reflex as rx
 
+from slipstream.plugins import ReactDedupePlugin
+
 # Enable the plugins that provide site maps, Tailwind styles, and Radix themes.
 config: rx.Config = rx.Config(
     app_name="slipstream",
@@ -13,5 +15,6 @@ config: rx.Config = rx.Config(
         rx.plugins.RadixThemesPlugin(
             theme=rx.theme(accent_color="red"),
         ),
+        ReactDedupePlugin(),
     ],
 )
