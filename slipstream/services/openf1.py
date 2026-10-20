@@ -1,4 +1,4 @@
-"""Typed, rate-limited access to OpenF1's free historical data API."""
+"""Typed, rate-limited access to OpenF1 meeting schedules and race data."""
 
 import re
 import unicodedata
@@ -118,12 +118,30 @@ class OpenF1SessionData(TypedDict):
 
 
 class OpenF1Meeting(TypedDict):
-    """OpenF1 event identity used to resolve a Jolpica championship round."""
+    """OpenF1 event identity and schedule fields for one Grand Prix weekend."""
 
     meeting_key: int
     circuit_key: int
     name: str
+    country_name: str
+    location: str
+    circuit_short_name: str
     starts_at: datetime
+    ends_at: datetime | None
+    track_offset_minutes: int | None
+    is_cancelled: bool
+
+
+class OpenF1MeetingSession(TypedDict):
+    """Published start and end times for one session in a meeting."""
+
+    session_key: int
+    name: str
+    session_type: str
+    starts_at: datetime | None
+    ends_at: datetime | None
+    track_offset_minutes: int | None
+    is_cancelled: bool
 
 
 class OpenF1CarSample(TypedDict):
@@ -227,6 +245,21 @@ def _timestamp(value: object) -> datetime | None:
     return parsed
 
 
+def _utc_offset_minutes(value: object) -> int | None:
+    """Parse OpenF1's signed HH:MM:SS circuit offset."""
+    if not isinstance(value, str) or not value:
+        return None
+    sign = -1 if value.startswith("-") else 1
+    parts = value.lstrip("+-").split(":")
+    try:
+        hours = int(parts[0])
+        minutes = int(parts[1]) if len(parts) > 1 else 0
+        seconds = int(parts[2]) if len(parts) > 2 else 0
+    except ValueError:
+        return None
+    return sign * (hours * 60 + minutes + round(seconds / 60))
+
+
 @_openf1_cached()
 def _race_meetings(season: int) -> tuple[OpenF1Meeting, ...]:
     """Return chronological Grand Prix meetings for one season."""
@@ -249,11 +282,24 @@ def _race_meetings(season: int) -> tuple[OpenF1Meeting, ...]:
                 "meeting_key": meeting_key,
                 "circuit_key": circuit_key,
                 "name": name,
+                "country_name": str(row.get("country_name") or ""),
+                "location": str(row.get("location") or ""),
+                "circuit_short_name": str(row.get("circuit_short_name") or ""),
                 "starts_at": starts_at,
+                "ends_at": _timestamp(row.get("date_end")),
+                "track_offset_minutes": _utc_offset_minutes(
+                    row.get("gmt_offset")
+                ),
+                "is_cancelled": row.get("is_cancelled") is True,
             }
         )
     meetings.sort(key=lambda item: item["starts_at"])
     return tuple(meetings)
+
+
+def get_openf1_meetings(season: int) -> tuple[OpenF1Meeting, ...]:
+    """Return cached Grand Prix meeting metadata for one season."""
+    return _race_meetings(season)
 
 
 def _normalized_event_name(value: str) -> str:
@@ -312,15 +358,34 @@ def _resolve_meeting(season: int, round_number: int) -> OpenF1Meeting:
 
 
 @_openf1_cached()
-def _meeting_sessions(meeting_key: int) -> tuple[tuple[str, int, bool], ...]:
-    """Return stable session names, keys, and cancellation flags for a meeting."""
-    sessions: list[tuple[str, int, bool]] = []
+def _meeting_sessions(meeting_key: int) -> tuple[OpenF1MeetingSession, ...]:
+    """Return published session timing and identity for one meeting."""
+    sessions: list[OpenF1MeetingSession] = []
     for row in _request_rows("sessions", {"meeting_key": meeting_key}):
         name = str(row.get("session_name") or "")
         session_key = _integer(row.get("session_key"))
         if name and session_key is not None:
-            sessions.append((name, session_key, row.get("is_cancelled") is True))
+            sessions.append(
+                {
+                    "session_key": session_key,
+                    "name": name,
+                    "session_type": str(row.get("session_type") or ""),
+                    "starts_at": _timestamp(row.get("date_start")),
+                    "ends_at": _timestamp(row.get("date_end")),
+                    "track_offset_minutes": _utc_offset_minutes(
+                        row.get("gmt_offset")
+                    ),
+                    "is_cancelled": row.get("is_cancelled") is True,
+                }
+            )
     return tuple(sessions)
+
+
+def get_openf1_meeting_sessions(
+    meeting_key: int,
+) -> tuple[OpenF1MeetingSession, ...]:
+    """Return cached scheduled sessions for one OpenF1 meeting."""
+    return _meeting_sessions(meeting_key)
 
 
 @_openf1_cached()
@@ -335,11 +400,11 @@ def get_openf1_session_key(season: int, round_number: int, session_code: str) ->
     meeting_key = _resolve_meeting(season, round_number)["meeting_key"]
     sessions = _meeting_sessions(meeting_key)
     for expected_name in expected_names:
-        for name, session_key, cancelled in sessions:
-            if cancelled:
+        for session in sessions:
+            if session["is_cancelled"]:
                 continue
-            if name == expected_name:
-                return session_key
+            if session["name"] == expected_name:
+                return session["session_key"]
     raise LookupError("The requested OpenF1 session could not be found")
 
 

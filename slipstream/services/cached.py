@@ -12,7 +12,6 @@ from .api import (
     PastEvent,
     RaceWeekend,
     SessionLaps,
-    TrackSessionDetails,
     get_available_seasons,
     get_completed_races,
     get_constructor_standings,
@@ -22,7 +21,6 @@ from .api import (
     get_race_weekend,
     get_session_classification,
     get_session_laps,
-    get_track_session_details,
     has_session_results,
     parse_integer,
 )
@@ -126,17 +124,6 @@ def get_cached_race_weekend(today: date | None = None) -> RaceWeekend | None:
         ("race_weekend", current_date.isoformat()),
         5 * 60,
         lambda: get_race_weekend(current_date),
-    )
-
-
-def get_cached_track_session_details(
-    season: str, round_number: str
-) -> dict[str, TrackSessionDetails]:
-    """Return circuit time offsets and session end times with a one-hour TTL."""
-    return _cached_provider_call(
-        ("track_session_details", season, round_number),
-        60 * 60,
-        lambda: get_track_session_details(season, round_number),
     )
 
 

@@ -1,8 +1,8 @@
 """Fetch and normalize Formula 1 schedules and championship standings."""
 
-import json
 import logging
 import re
+import unicodedata
 from datetime import UTC, date, datetime, time, timedelta, timezone
 from functools import lru_cache
 from math import ceil, isfinite
@@ -14,7 +14,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import fastf1
 import fastf1.plotting
 import pandas as pd
-import requests
 from fastf1.core import Session
 from fastf1.ergast import Ergast
 from fastf1.exceptions import DataNotLoadedError
@@ -24,7 +23,11 @@ from .catalog import COMPOUND_COLORS, EVENT_SESSION_FIELDS, SUPPORTED_SESSION_CO
 from .flags import flag_for_circuit_country
 from .openf1 import (
     OPENF1_FIRST_HISTORICAL_SEASON,
+    OpenF1Meeting,
+    OpenF1MeetingSession,
     OpenF1SessionData,
+    get_openf1_meeting_sessions,
+    get_openf1_meetings,
     get_openf1_session_data,
 )
 
@@ -49,13 +52,6 @@ class ScheduledSession(TypedDict):
     ends_at: str
     track_offset_minutes: int | None
     results_available: bool
-
-
-class TrackSessionDetails(TypedDict):
-    """Circuit offset and optional scheduled UTC end for one session."""
-
-    offset_minutes: int
-    ends_at: str
 
 
 class ScheduleDay(TypedDict):
@@ -1110,12 +1106,11 @@ def _race_timing(
 def get_race_weekend(
     today: date | None = None,
 ) -> RaceWeekend | None:
-    """Return the current race weekend, or the next scheduled one.
+    """Return the current or next OpenF1 Grand Prix meeting.
 
-    The weekend begins on the date of its first scheduled session and ends on
-    race day. When no weekend is underway, use the earliest future event in
-    this season or the next published season. Events without session dates use
-    race day as their start date.
+    OpenF1 supplies the event identity and scheduled session windows. The
+    existing season calendar supplies the championship round and canonical
+    circuit name used by result links and archive pages.
 
     Args:
         today: Date to check, defaulting to the server's local date.
@@ -1124,139 +1119,180 @@ def get_race_weekend(
         A display-ready event record, or ``None`` when no event is scheduled.
     """
     current_date: date = today or date.today()
-    # Sprint qualifying appears under two Ergast field names. Both map to one
-    # display label and are deduplicated when sessions are grouped by date.
-    session_fields: tuple[tuple[str, str, str], ...] = EVENT_SESSION_FIELDS
-    selected: tuple[date, date, dict[str, Any]] | None = None
-    selected_season: int = current_date.year
-    status = ""
+    selected: tuple[int, str, OpenF1Meeting, date, date] | None = None
+    session_names: dict[str, tuple[str, str]] = {
+        "Practice 1": ("FP1", "Practice 1"),
+        "Practice 2": ("FP2", "Practice 2"),
+        "Practice 3": ("FP3", "Practice 3"),
+        "Sprint Qualifying": ("SQ", "Sprint Qualifying"),
+        "Sprint Shootout": ("SS", "Sprint Qualifying"),
+        "Sprint": ("S", "Sprint"),
+        "Qualifying": ("Q", "Qualifying"),
+        "Race": ("R", "Race"),
+    }
+
     for season in (current_date.year, current_date.year + 1):
-        response: list[dict[str, Any]] = _race_schedule(season)
-        current_events: list[tuple[date, date, dict[str, Any]]] = []
-        future_events: list[tuple[date, date, dict[str, Any]]] = []
-        for race in response:
-            race_date = parse_race_date(race.get("date"))
-            if race_date is None or race_date < current_date:
+        meetings: tuple[OpenF1Meeting, ...] = get_openf1_meetings(season)
+        current_events: list[tuple[OpenF1Meeting, date, date]] = []
+        future_events: list[tuple[OpenF1Meeting, date, date]] = []
+        for meeting in meetings:
+            if meeting["is_cancelled"]:
                 continue
-
-            if not format_value(race.get("round")) or not format_value(
-                race.get("raceName")
-            ):
-                continue
-
-            session_dates: list[date] = []
-            for field, _, _ in session_fields:
-                session: object = race.get(field)
-                session_date_value: object = (
-                    session.get("date") if isinstance(session, dict) else session
-                )
-                session_date = parse_race_date(session_date_value)
-                if session_date is not None and session_date <= race_date:
-                    session_dates.append(session_date)
-            start_date = min(session_dates, default=race_date)
-            event = (start_date, race_date, race)
-            if start_date <= current_date <= race_date:
-                current_events.append(event)
+            track_zone = timezone(
+                timedelta(minutes=meeting["track_offset_minutes"] or 0)
+            )
+            start_date = meeting["starts_at"].astimezone(track_zone).date()
+            meeting_end = meeting["ends_at"] or meeting["starts_at"]
+            end_date = meeting_end.astimezone(track_zone).date()
+            if start_date <= current_date <= end_date:
+                current_events.append((meeting, start_date, end_date))
             elif start_date > current_date:
-                future_events.append(event)
+                future_events.append((meeting, start_date, end_date))
 
         if current_events:
-            selected = min(current_events, key=lambda event: event[1])
-            selected_season = season
-            status = "current"
+            meeting, start_date, end_date = min(
+                current_events, key=lambda event: event[2]
+            )
+            selected = (season, "current", meeting, start_date, end_date)
             break
         if future_events:
-            selected = min(future_events, key=lambda event: event[0])
-            selected_season = season
-            status = "upcoming"
+            meeting, start_date, end_date = min(
+                future_events, key=lambda event: event[1]
+            )
+            selected = (season, "upcoming", meeting, start_date, end_date)
             break
 
     if selected is None:
         return None
 
-    start_date, race_date, race = selected
-    round_number = format_value(race.get("round"))
-    race_name = format_value(race.get("raceName"))
-    circuit: dict[str, Any] = race.get("Circuit") or {}
-    location: dict[str, Any] = circuit.get("Location") or {}
-    country = format_value(location.get("country"))
-    # Build the display schedule only for the selected weekend. Keep each
-    # session's start time with its name so the card can align them.
-    sessions_by_date: dict[date, dict[str, ScheduledSession]] = {}
-    sprint_qualifying_added = False
-    for field, session_code, session_name in session_fields:
-        session: object = race.get(field)
-        session_date_value: object = (
-            session.get("date") if isinstance(session, dict) else session
+    selected_season, status, meeting, start_date, end_date = selected
+    legacy_races: list[dict[str, Any]] = _race_schedule(selected_season)
+    race = _match_openf1_meeting_to_race(meeting, legacy_races)
+    if race is None:
+        logger.warning(
+            "Could not map OpenF1 meeting to its championship round",
+            extra={"season": selected_season, "meeting": meeting["name"]},
         )
-        session_date: date | None = parse_race_date(session_date_value)
-        if session_date is None or not start_date <= session_date <= race_date:
+        return None
+
+    sessions_by_date: dict[date, dict[str, ScheduledSession]] = {}
+    added_names: set[str] = set()
+    openf1_sessions: tuple[OpenF1MeetingSession, ...] = (
+        get_openf1_meeting_sessions(meeting["meeting_key"])
+    )
+    for session in openf1_sessions:
+        if session["is_cancelled"] or session["name"] not in session_names:
+            continue
+        session_start = session["starts_at"]
+        if session_start is None:
+            continue
+        session_code, display_name = session_names[session["name"]]
+        if display_name in added_names:
+            continue
+        track_offset = (
+            session["track_offset_minutes"]
+            if session["track_offset_minutes"] is not None
+            else meeting["track_offset_minutes"]
+        )
+        track_zone = timezone(timedelta(minutes=track_offset or 0))
+        session_date = session_start.astimezone(track_zone).date()
+        if not start_date <= session_date <= end_date:
             continue
 
-        # The event selector uses the first published Sprint Qualifying field.
-        # Keep the schedule's link code in step with that selector.
-        if field in ("SprintQualifying", "SprintShootout"):
-            if sprint_qualifying_added:
-                continue
-            sprint_qualifying_added = True
-
-        session_start = parse_session_start(
-            session_date, session.get("time") if isinstance(session, dict) else None
+        start_utc = session_start.astimezone(UTC)
+        session_end = session["ends_at"]
+        # Race finishes vary in practice; keep its row start-only as requested.
+        end_utc = (
+            session_end.astimezone(UTC)
+            if session_end is not None and session_code != "R"
+            else None
         )
-        day_sessions = sessions_by_date.setdefault(
-            session_start.date() if session_start is not None else session_date, {}
-        )
-        day_sessions[session_name] = {
+        sessions_by_date.setdefault(session_date, {})[display_name] = {
             "code": session_code,
-            "name": session_name,
-            "time": session_start.strftime("%H:%M") if session_start else "TBD",
+            "name": display_name,
+            "time": start_utc.strftime("%H:%M"),
             "end_time": "",
-            "starts_at": session_start.isoformat() if session_start else "",
-            "ends_at": "",
-            "track_offset_minutes": None,
+            "starts_at": start_utc.isoformat(),
+            "ends_at": end_utc.isoformat() if end_utc is not None else "",
+            "track_offset_minutes": track_offset,
             "results_available": False,
         }
+        added_names.add(display_name)
 
-    # The race's date and time are stored at the top level of the record.
-    race_start = parse_session_start(race_date, race.get("time"))
-    sessions_by_date.setdefault(
-        race_start.date() if race_start is not None else race_date, {}
-    )["Race"] = {
-        "code": "R",
-        "name": "Race",
-        "time": race_start.strftime("%H:%M") if race_start else "TBD",
-        "end_time": "",
-        "starts_at": race_start.isoformat() if race_start else "",
-        "ends_at": "",
-        "track_offset_minutes": None,
-        "results_available": False,
-    }
     schedule_days: list[ScheduleDay] = [
         {
             "day": session_date.strftime("%A").upper(),
             "date": f"{session_date.day} {session_date.strftime('%b')}",
             "date_iso": session_date.isoformat(),
             "sessions": sorted(
-                day_sessions.values(),
-                key=lambda session: (session["time"] == "TBD", session["time"]),
+                day_sessions.values(), key=lambda session: session["starts_at"]
             ),
         }
         for session_date, day_sessions in sorted(sessions_by_date.items())
     ]
+    circuit: dict[str, Any] = race.get("Circuit") or {}
+    location: dict[str, Any] = circuit.get("Location") or {}
+    country = format_value(location.get("country")) or meeting["country_name"]
     return {
         "season": str(selected_season),
         "status": status,
-        "round": round_number,
-        "race_name": race_name,
-        "circuit_name": format_value(circuit.get("circuitName")),
-        "locality": format_value(location.get("locality")),
+        "round": format_value(race.get("round")),
+        "race_name": meeting["name"],
+        "circuit_name": format_value(circuit.get("circuitName"))
+        or meeting["circuit_short_name"],
+        "locality": meeting["location"] or format_value(location.get("locality")),
         "country": country,
         "country_flag": flag_for_circuit_country(country),
         "schedule_days": schedule_days,
         "date_range": (
-            f"{start_date.strftime('%d %b')} – {race_date.strftime('%d %b %Y')}"  # noqa: RUF001 - rendered date-range punctuation.
+            f"{start_date.strftime('%d %b')} – {end_date.strftime('%d %b %Y')}"  # noqa: RUF001 - rendered date-range punctuation.
         ),
     }
+
+
+def _normalize_event_name(value: str) -> str:
+    """Return an accent- and punctuation-insensitive Grand Prix name."""
+    ascii_value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore")
+    return re.sub(r"[^a-z0-9]+", " ", ascii_value.decode().lower()).strip()
+
+
+def _match_openf1_meeting_to_race(
+    meeting: OpenF1Meeting, races: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Find the legacy round and canonical circuit name for an OpenF1 meeting."""
+    meeting_name = _normalize_event_name(meeting["name"])
+    valid_races = [
+        race
+        for race in races
+        if format_value(race.get("round"))
+        and format_value(race.get("raceName"))
+    ]
+    exact_match = next(
+        (
+            race
+            for race in valid_races
+            if _normalize_event_name(format_value(race.get("raceName")))
+            == meeting_name
+        ),
+        None,
+    )
+    if exact_match is not None:
+        return exact_match
+
+    target_timestamp = meeting["ends_at"] or meeting["starts_at"]
+    target_zone = timezone(
+        timedelta(minutes=meeting["track_offset_minutes"] or 0)
+    )
+    target_date = target_timestamp.astimezone(target_zone).date()
+    dated_races: list[tuple[int, dict[str, Any]]] = []
+    for race in valid_races:
+        race_date = parse_race_date(race.get("date"))
+        if race_date is not None:
+            dated_races.append((abs((race_date - target_date).days), race))
+    if not dated_races:
+        return None
+    distance, nearest_race = min(dated_races, key=lambda item: item[0])
+    return nearest_race if distance <= 3 else None
 
 
 def parse_race_date(value: object) -> date | None:
@@ -1331,110 +1367,6 @@ def parse_session_start(session_date: date, value: object) -> datetime | None:
     if start.tzinfo is None:
         start = start.replace(tzinfo=UTC)
     return start.astimezone(UTC)
-
-
-def get_track_time_offsets(season: str, round_number: str) -> dict[str, int]:
-    """Read each session's circuit UTC offset from FastF1's local schedule.
-
-    Args:
-        season: Championship year.
-        round_number: Race round in that championship.
-
-    Returns:
-        UTC offsets in minutes, keyed by the displayed session name.
-    """
-    try:
-        event = fastf1.get_event(int(season), int(round_number), backend="fastf1")
-    except Exception:  # noqa: BLE001 - event metadata is optional for UI fallbacks.
-        return {}
-
-    offsets: dict[str, int] = {}
-    for number in range(1, 6):
-        name = event.get(f"Session{number}")
-        local_start = event.get(f"Session{number}Date")
-        if (
-            not isinstance(name, str)
-            or not isinstance(local_start, datetime)
-            or pd.isna(local_start)
-        ):
-            continue
-        offset: timedelta | None = local_start.utcoffset()
-        if offset is None:
-            continue
-        display_name = "Sprint Qualifying" if name == "Sprint Shootout" else name
-        offsets[display_name] = int(offset.total_seconds() // 60)
-    return offsets
-
-
-def get_track_session_details(
-    season: str, round_number: str
-) -> dict[str, TrackSessionDetails]:
-    """Read circuit offsets and published session ends from F1's schedule.
-
-    Args:
-        season: Championship year.
-        round_number: Race round in that championship.
-
-    Returns:
-        Session details keyed by displayed name. Missing ends stay empty.
-    """
-    try:
-        response = requests.get(
-            f"https://livetiming.formula1.com/static/{int(season)}/Index.json",
-            timeout=10,
-        )
-        response.raise_for_status()
-        # The live timing index includes a UTF-8 BOM, which response.json()
-        # does not accept with the requests default decoder.
-        payload: dict[str, Any] = json.loads(response.content.decode("utf-8-sig"))
-        meetings: list[dict[str, Any]] = payload.get("Meetings", [])
-        meeting = next(
-            event for event in meetings if event.get("Number") == int(round_number)
-        )
-        details: dict[str, TrackSessionDetails] = {}
-        for session in meeting.get("Sessions", []):
-            name = session.get("Name")
-            if not isinstance(name, str) or not session.get("GmtOffset"):
-                continue
-            offset = timedelta(
-                seconds=pd.Timedelta(session["GmtOffset"]).total_seconds()
-            )
-            circuit_zone = timezone(offset)
-            if name == "Sprint Shootout":
-                name = "Sprint Qualifying"
-            elif name == "Sprint Qualifying" and int(season) <= 2022:
-                name = "Sprint"
-
-            ends_at = ""
-            raw_end = session.get("EndDate")
-            raw_start = session.get("StartDate")
-            if isinstance(raw_end, str) and isinstance(raw_start, str):
-                try:
-                    end = datetime.fromisoformat(raw_end)
-                    start = datetime.fromisoformat(raw_start)
-                    if end.tzinfo is None:
-                        end = end.replace(tzinfo=circuit_zone)
-                    if start.tzinfo is None:
-                        start = start.replace(tzinfo=circuit_zone)
-                    if end > start:
-                        ends_at = end.astimezone(UTC).isoformat()
-                except ValueError:
-                    pass
-            details[name] = {
-                "offset_minutes": int(offset.total_seconds() // 60),
-                "ends_at": ends_at,
-            }
-        if details:
-            return details
-    except requests.RequestException, ValueError, KeyError, StopIteration:
-        pass
-
-    # FastF1's public schedule still provides circuit offsets when the raw
-    # live timing index or its EndDate fields are unavailable.
-    return {
-        name: {"offset_minutes": offset, "ends_at": ""}
-        for name, offset in get_track_time_offsets(season, round_number).items()
-    }
 
 
 def format_weekend_schedule(
