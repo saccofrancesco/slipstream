@@ -1,11 +1,10 @@
 """TTL-cached entry points for repeated external data requests."""
 
+import logging
 from collections.abc import Callable, Hashable
 from datetime import date
-import logging
 from threading import BoundedSemaphore
 from time import monotonic
-from typing import TypeVar
 
 from .api import (
     DriverClassification,
@@ -29,8 +28,6 @@ from .api import (
 )
 from .cache import TTLCache
 
-T = TypeVar("T")
-
 _PROVIDER_CACHE: TTLCache = TTLCache(maxsize=128)
 _PROVIDER_SEMAPHORE: BoundedSemaphore = BoundedSemaphore(value=4)
 _CURRENT_SEASON_TTL_SECONDS: int = 60
@@ -38,7 +35,7 @@ _HISTORICAL_TTL_SECONDS: int = 24 * 60 * 60
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-def _cached_provider_call(
+def _cached_provider_call[T](
     key: Hashable,
     ttl_seconds: float,
     loader: Callable[[], T],
@@ -51,9 +48,7 @@ def _cached_provider_call(
             with _PROVIDER_SEMAPHORE:
                 return loader()
         except Exception:
-            key_parts: tuple[Hashable, ...] = (
-                key if isinstance(key, tuple) else (key,)
-            )
+            key_parts: tuple[Hashable, ...] = key if isinstance(key, tuple) else (key,)
             operation: str = str(key_parts[0]) if key_parts else "provider"
             logger.exception(
                 "External data request failed",

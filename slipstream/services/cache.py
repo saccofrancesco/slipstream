@@ -1,11 +1,12 @@
 """Small thread-safe TTL cache for normalized provider results."""
 
 from collections import OrderedDict
+from collections.abc import Callable, Hashable
 from concurrent.futures import Future
 from copy import deepcopy
 from threading import Lock
 from time import monotonic
-from typing import Callable, Hashable, TypeVar, cast
+from typing import TypeVar, cast
 
 T = TypeVar("T")
 

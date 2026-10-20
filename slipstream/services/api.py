@@ -3,7 +3,7 @@
 import json
 import logging
 import re
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta, timezone
 from functools import lru_cache
 from math import ceil, isfinite
 from statistics import median
@@ -19,11 +19,9 @@ from fastf1.core import Session
 from fastf1.ergast import Ergast
 from fastf1.exceptions import DataNotLoadedError
 
-from .flags import (
-    flag_for_circuit_country,
-    flag_for_driver_country_code,
-    flag_for_nationality,
-)
+from .cache import TTLCache
+from .catalog import COMPOUND_COLORS, EVENT_SESSION_FIELDS, SUPPORTED_SESSION_CODES
+from .flags import flag_for_circuit_country
 from .openf1 import (
     OPENF1_FIRST_HISTORICAL_SEASON,
     OpenF1SessionData,
@@ -37,6 +35,7 @@ fastf1.Cache.set_disabled()
 # Reuse one Ergast client for schedule and standings requests.
 ergast: Ergast = Ergast()
 logger: logging.Logger = logging.getLogger(__name__)
+_RACE_SCHEDULE_CACHE: TTLCache = TTLCache(maxsize=8)
 
 
 class ScheduledSession(TypedDict):
@@ -107,7 +106,6 @@ class EventDetails(TypedDict):
     season: str
     round: str
     race_name: str
-    race_date: str
     circuit_name: str
     locality: str
     country: str
@@ -122,9 +120,6 @@ class DriverClassification(TypedDict):
     position: str
     given_name: str
     family_name: str
-    country_code: str
-    nationality: str
-    country_flag: str
     team: str
     team_color: str
     time: str
@@ -159,25 +154,14 @@ class SessionLaps(TypedDict):
     laps: list[LapPoint]
 
 
-# Keep the calendar's public session names and FastF1 identifiers together.
-EVENT_SESSION_FIELDS: tuple[tuple[str, str, str], ...] = (
-    ("FirstPractice", "FP1", "Practice 1"),
-    ("SecondPractice", "FP2", "Practice 2"),
-    ("ThirdPractice", "FP3", "Practice 3"),
-    ("SprintQualifying", "SQ", "Sprint Qualifying"),
-    ("SprintShootout", "SS", "Sprint Qualifying"),
-    ("Sprint", "S", "Sprint"),
-    ("Qualifying", "Q", "Qualifying"),
-)
-
-COMPOUND_COLORS: dict[str, str] = {
-    "SOFT": "#E10600",
-    "MEDIUM": "#F2CE22",
-    "HARD": "#F2F2F2",
-    "INTERMEDIATE": "#38B449",
-    "WET": "#2D9CDB",
-    "UNKNOWN": "#969BA5",
-}
+def _race_schedule(season: int) -> list[dict[str, Any]]:
+    """Return one cached raw race calendar for all schedule views."""
+    ttl_seconds: int = 5 * 60 if season >= date.today().year else 24 * 60 * 60
+    return _RACE_SCHEDULE_CACHE.get_or_load(
+        ("race_schedule", season),
+        ttl_seconds,
+        lambda: ergast.get_race_schedule(season=season, result_type="raw", limit=1000),
+    )
 
 
 def get_available_seasons(start_year: int = 1950) -> list[str]:
@@ -191,9 +175,7 @@ def get_available_seasons(start_year: int = 1950) -> list[str]:
     """
     # The raw Ergast response is a list of records; keep that boundary typed
     # before extracting the small string-only shape used by page state.
-    response: list[dict[str, Any]] = ergast.get_seasons(
-        result_type="raw", limit=1000
-    )
+    response: list[dict[str, Any]] = ergast.get_seasons(result_type="raw", limit=1000)
     if not response:
         return []
 
@@ -215,9 +197,7 @@ def get_completed_races(season: int | str) -> list[dict[str, str]]:
     Returns:
         Race records with round numbers and display labels.
     """
-    response: list[dict[str, Any]] = ergast.get_race_schedule(
-        season=int(season), result_type="raw", limit=1000
-    )
+    response: list[dict[str, Any]] = _race_schedule(int(season))
     if not response:
         return []
 
@@ -245,9 +225,7 @@ def get_completed_races(season: int | str) -> list[dict[str, str]]:
     return sorted(races, key=lambda race: int(race["round"]))
 
 
-def get_past_events(
-    season: int | str, today: date | None = None
-) -> list[PastEvent]:
+def get_past_events(season: int | str, today: date | None = None) -> list[PastEvent]:
     """Return races before today, newest first, for one season.
 
     Args:
@@ -258,9 +236,7 @@ def get_past_events(
         Compact race records ordered from the latest race to the opener.
     """
     current_date: date = today or date.today()
-    response: list[dict[str, Any]] = ergast.get_race_schedule(
-        season=int(season), result_type="raw", limit=1000
-    )
+    response: list[dict[str, Any]] = _race_schedule(int(season))
     dated_events: list[tuple[date, PastEvent]] = []
     for race in response:
         race_date = parse_race_date(race.get("date"))
@@ -293,9 +269,7 @@ def get_past_events(
 
     return [
         event
-        for _, event in sorted(
-            dated_events, key=lambda item: item[0], reverse=True
-        )
+        for _, event in sorted(dated_events, key=lambda item: item[0], reverse=True)
     ]
 
 
@@ -312,25 +286,14 @@ def get_event_details(
         Normalized event details, or ``None`` when the route does not match an
         event in the published schedule.
     """
-    coordinates: tuple[int, int] | None = parse_event_coordinates(
-        season, round_number
-    )
+    coordinates: tuple[int, int] | None = parse_event_coordinates(season, round_number)
     if coordinates is None:
         return None
     parsed_season, parsed_round = coordinates
 
-    response: list[dict[str, Any]] = ergast.get_race_schedule(
-        season=parsed_season,
-        round=parsed_round,
-        result_type="raw",
-        limit=1,
-    )
+    response: list[dict[str, Any]] = _race_schedule(parsed_season)
     race: dict[str, Any] | None = next(
-        (
-            row
-            for row in response
-            if parse_integer(row.get("round")) == parsed_round
-        ),
+        (row for row in response if parse_integer(row.get("round")) == parsed_round),
         None,
     )
     if race is None:
@@ -398,10 +361,7 @@ def get_event_details(
     )
     session_dates.append(race_date)
     session_options: list[SessionOption] = [
-        option
-        for _, _, _, _, option in sorted(
-            scheduled, key=lambda item: item[:4]
-        )
+        option for _, _, _, _, option in sorted(scheduled, key=lambda item: item[:4])
     ]
 
     start_date = min(session_dates, default=race_date)
@@ -409,14 +369,12 @@ def get_event_details(
         "season": str(parsed_season),
         "round": str(parsed_round),
         "race_name": race_name,
-        "race_date": race_date.strftime("%d %b %Y"),
         "circuit_name": format_value(circuit.get("circuitName")),
         "locality": format_value(location.get("locality")),
         "country": country,
         "country_flag": flag_for_circuit_country(country),
         "date_range": (
-            f"{start_date.strftime('%d %b')} – "
-            f"{race_date.strftime('%d %b %Y')}"
+            f"{start_date.strftime('%d %b')} – {race_date.strftime('%d %b %Y')}"  # noqa: RUF001 - rendered date-range punctuation.
         ),
         "sessions": session_options,
     }
@@ -447,20 +405,10 @@ def get_session_classification(
         Exception: Propagates FastF1 loading errors for the page to report.
     """
     coordinates: tuple[int, int] | None = parse_event_coordinates(season, round_number)
-    allowed_codes: set[str] = {
-        "FP1",
-        "FP2",
-        "FP3",
-        "SQ",
-        "SS",
-        "S",
-        "Q",
-        "R",
-    }
     if coordinates is None:
         raise ValueError("A supported numeric season and round are required.")
     parsed_season, parsed_round = coordinates
-    if session_code not in allowed_codes:
+    if session_code not in SUPPORTED_SESSION_CODES:
         raise ValueError("The requested session is not supported.")
 
     practice_session: bool = session_code in {"FP1", "FP2", "FP3"}
@@ -476,15 +424,6 @@ def get_session_classification(
     result_rows: list[dict[str, Any]] = session.results.to_dict(orient="records")
     if not result_rows:
         return []
-
-    # F1's timing feed can leave CountryCode blank. Jolpica has the matching
-    # event driver nationalities; flags fall back to the timing code if needed.
-    try:
-        driver_nationalities = get_driver_nationalities(
-            parsed_season, parsed_round
-        )
-    except Exception:
-        driver_nationalities = {}
 
     fastest_laps: dict[str, Any] = {}
     if practice_session:
@@ -528,10 +467,7 @@ def get_session_classification(
         ordered_rows = sorted(result_rows, key=fastest_lap_sort_key)
     else:
         ordered_rows = [
-            row
-            for _, row in sorted(
-                enumerate(result_rows), key=classified_sort_key
-            )
+            row for _, row in sorted(enumerate(result_rows), key=classified_sort_key)
         ]
 
     # Before 2023, Sprint Qualifying was a race-like session. Its result rows
@@ -569,10 +505,6 @@ def get_session_classification(
             season=parsed_season,
             round_number=parsed_round,
         )
-        country_code = format_value(row.get("CountryCode"))
-        nationality = driver_nationalities.get(
-            format_value(row.get("DriverId")), country_code
-        )
         given_name = format_value(row.get("FirstName"))
         family_name = format_value(row.get("LastName"))
         if not given_name and not family_name:
@@ -587,9 +519,12 @@ def get_session_classification(
                 fastest_lap, leader_lap_seconds, index == 1
             )
         else:
-            position = _format_position(
-                _first_present(row.get("Position"), row.get("ClassifiedPosition"))
-            ) or "—"
+            position = (
+                _format_position(
+                    _first_present(row.get("Position"), row.get("ClassifiedPosition"))
+                )
+                or "—"
+            )
             if qualifying_session:
                 time_label, result_time = _qualifying_timing(
                     row, position, leader_lap_seconds
@@ -604,10 +539,6 @@ def get_session_classification(
                 "position": position,
                 "given_name": given_name,
                 "family_name": family_name,
-                "country_code": country_code,
-                "nationality": nationality,
-                "country_flag": flag_for_nationality(nationality)
-                or flag_for_driver_country_code(country_code),
                 "team": team,
                 "team_color": team_color,
                 "time": result_time or "—",
@@ -632,8 +563,7 @@ def has_session_results(
         Whether at least one driver result row is available.
     """
     coordinates: tuple[int, int] | None = parse_event_coordinates(season, round_number)
-    allowed_codes: set[str] = {code for _, code, _ in EVENT_SESSION_FIELDS} | {"R"}
-    if coordinates is None or session_code not in allowed_codes:
+    if coordinates is None or session_code not in SUPPORTED_SESSION_CODES:
         return False
     parsed_season, parsed_round = coordinates
 
@@ -705,9 +635,7 @@ def _normalize_openf1_laps(data: OpenF1SessionData) -> SessionLaps:
         compound = next(
             (
                 name
-                for start, end, name in stints_by_driver.get(
-                    row["driver_number"], []
-                )
+                for start, end, name in stints_by_driver.get(row["driver_number"], [])
                 if start <= row["lap_number"] <= end
             ),
             "UNKNOWN",
@@ -756,7 +684,7 @@ def get_session_laps(
     if coordinates is None:
         raise ValueError("A supported numeric season and round are required.")
     parsed_season, parsed_round = coordinates
-    if session_code not in {"FP1", "FP2", "FP3", "SQ", "SS", "S", "Q", "R"}:
+    if session_code not in SUPPORTED_SESSION_CODES:
         raise ValueError("The requested session is not supported.")
 
     if parsed_season >= OPENF1_FIRST_HISTORICAL_SEASON:
@@ -821,7 +749,7 @@ def get_session_laps(
         raw_laps = fastf1_laps.to_dict(orient="records")
         try:
             compound_colors = fastf1.plotting.get_compound_mapping(session)
-        except Exception:
+        except Exception:  # noqa: BLE001 - compounds are optional metadata.
             # Some older or incomplete timing feeds do not identify the event year.
             compound_colors = COMPOUND_COLORS
     if not raw_laps:
@@ -911,7 +839,7 @@ def _is_missing(value: object) -> bool:
         return True
     try:
         return bool(pd.isna(value))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return False
 
 
@@ -987,24 +915,6 @@ def _get_ergast_race_laps(
     return lap_rows
 
 
-@lru_cache(maxsize=128)
-def get_driver_nationalities(season: int, round_number: int) -> dict[str, str]:
-    """Return driver nationalities for one event, keyed by driver identifier."""
-    response: list[dict[str, Any]] = ergast.get_driver_info(
-        season=season,
-        round=round_number,
-        result_type="raw",
-        limit=1000,
-    )
-    return {
-        format_value(driver.get("driverId")): format_value(
-            driver.get("nationality")
-        )
-        for driver in response
-        if format_value(driver.get("driverId"))
-    }
-
-
 def _first_present(*values: object) -> object | None:
     """Return the first non-missing scalar from an API result row."""
     return next((value for value in values if not _is_missing(value)), None)
@@ -1016,7 +926,7 @@ def _position_number(value: object) -> float | None:
         return None
     try:
         position = float(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
     return position if isfinite(position) and position > 0 else None
 
@@ -1040,7 +950,7 @@ def _time_seconds(value: object) -> float | None:
         try:
             seconds = float(total_seconds())
             return seconds if isfinite(seconds) else None
-        except (TypeError, ValueError, OverflowError):
+        except TypeError, ValueError, OverflowError:
             return None
     return None
 
@@ -1122,7 +1032,7 @@ def _lap_count(value: object) -> int | None:
         return None
     try:
         laps = float(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
     if not isfinite(laps) or laps < 0 or not laps.is_integer():
         return None
@@ -1143,9 +1053,7 @@ def _race_outcome(row: dict[str, Any]) -> str:
         return "EXC"
     if classified == "F" or "failed to qualify" in status:
         return "DNQ"
-    if status in {"finished", "lapped"} or re.fullmatch(
-        r"\+\s*\d+\s*laps?", status
-    ):
+    if status in {"finished", "lapped"} or re.fullmatch(r"\+\s*\d+\s*laps?", status):
         return ""
     if classified == "R" or status:
         return "DNF"
@@ -1223,9 +1131,7 @@ def get_race_weekend(
     selected_season: int = current_date.year
     status = ""
     for season in (current_date.year, current_date.year + 1):
-        response: list[dict[str, Any]] = ergast.get_race_schedule(
-            season=season, result_type="raw", limit=1000
-        )
+        response: list[dict[str, Any]] = _race_schedule(season)
         current_events: list[tuple[date, date, dict[str, Any]]] = []
         future_events: list[tuple[date, date, dict[str, Any]]] = []
         for race in response:
@@ -1295,8 +1201,7 @@ def get_race_weekend(
             sprint_qualifying_added = True
 
         session_start = parse_session_start(
-            session_date,
-            session.get("time") if isinstance(session, dict) else None
+            session_date, session.get("time") if isinstance(session, dict) else None
         )
         day_sessions = sessions_by_date.setdefault(
             session_start.date() if session_start is not None else session_date, {}
@@ -1349,8 +1254,7 @@ def get_race_weekend(
         "country_flag": flag_for_circuit_country(country),
         "schedule_days": schedule_days,
         "date_range": (
-            f"{start_date.strftime('%d %b')} – "
-            f"{race_date.strftime('%d %b %Y')}"
+            f"{start_date.strftime('%d %b')} – {race_date.strftime('%d %b %Y')}"  # noqa: RUF001 - rendered date-range punctuation.
         ),
     }
 
@@ -1380,9 +1284,9 @@ def parse_race_date(value: object) -> date | None:
 def format_session_time(value: object) -> str:
     """Format a published Ergast start time as HH:MM UTC, or TBD."""
     if isinstance(value, datetime):
-        return (
-            value.astimezone(timezone.utc) if value.tzinfo is not None else value
-        ).strftime("%H:%M")
+        return (value.astimezone(UTC) if value.tzinfo is not None else value).strftime(
+            "%H:%M"
+        )
     if isinstance(value, time):
         parsed_time = value
     elif isinstance(value, str):
@@ -1394,9 +1298,9 @@ def format_session_time(value: object) -> str:
         return "TBD"
 
     if parsed_time.tzinfo is not None:
-        parsed_time = datetime.combine(date(2000, 1, 1), parsed_time).astimezone(
-            timezone.utc
-        ).time()
+        parsed_time = (
+            datetime.combine(date(2000, 1, 1), parsed_time).astimezone(UTC).time()
+        )
     return parsed_time.strftime("%H:%M")
 
 
@@ -1425,8 +1329,8 @@ def parse_session_start(session_date: date, value: object) -> datetime | None:
         start = datetime.combine(session_date, parsed_time)
 
     if start.tzinfo is None:
-        start = start.replace(tzinfo=timezone.utc)
-    return start.astimezone(timezone.utc)
+        start = start.replace(tzinfo=UTC)
+    return start.astimezone(UTC)
 
 
 def get_track_time_offsets(season: str, round_number: str) -> dict[str, int]:
@@ -1441,7 +1345,7 @@ def get_track_time_offsets(season: str, round_number: str) -> dict[str, int]:
     """
     try:
         event = fastf1.get_event(int(season), int(round_number), backend="fastf1")
-    except Exception:
+    except Exception:  # noqa: BLE001 - event metadata is optional for UI fallbacks.
         return {}
 
     offsets: dict[str, int] = {}
@@ -1457,9 +1361,7 @@ def get_track_time_offsets(season: str, round_number: str) -> dict[str, int]:
         offset: timedelta | None = local_start.utcoffset()
         if offset is None:
             continue
-        display_name = (
-            "Sprint Qualifying" if name == "Sprint Shootout" else name
-        )
+        display_name = "Sprint Qualifying" if name == "Sprint Shootout" else name
         offsets[display_name] = int(offset.total_seconds() // 60)
     return offsets
 
@@ -1484,14 +1386,10 @@ def get_track_session_details(
         response.raise_for_status()
         # The live timing index includes a UTF-8 BOM, which response.json()
         # does not accept with the requests default decoder.
-        payload: dict[str, Any] = json.loads(
-            response.content.decode("utf-8-sig")
-        )
+        payload: dict[str, Any] = json.loads(response.content.decode("utf-8-sig"))
         meetings: list[dict[str, Any]] = payload.get("Meetings", [])
         meeting = next(
-            event
-            for event in meetings
-            if event.get("Number") == int(round_number)
+            event for event in meetings if event.get("Number") == int(round_number)
         )
         details: dict[str, TrackSessionDetails] = {}
         for session in meeting.get("Sessions", []):
@@ -1519,7 +1417,7 @@ def get_track_session_details(
                     if start.tzinfo is None:
                         start = start.replace(tzinfo=circuit_zone)
                     if end > start:
-                        ends_at = end.astimezone(timezone.utc).isoformat()
+                        ends_at = end.astimezone(UTC).isoformat()
                 except ValueError:
                     pass
             details[name] = {
@@ -1528,7 +1426,7 @@ def get_track_session_details(
             }
         if details:
             return details
-    except (requests.RequestException, ValueError, KeyError, StopIteration):
+    except requests.RequestException, ValueError, KeyError, StopIteration:
         pass
 
     # FastF1's public schedule still provides circuit offsets when the raw
@@ -1554,8 +1452,8 @@ def format_weekend_schedule(
     """
     try:
         viewer_zone = ZoneInfo(viewer_timezone)
-    except (ValueError, ZoneInfoNotFoundError):
-        viewer_zone = timezone.utc
+    except ValueError, ZoneInfoNotFoundError:
+        viewer_zone = UTC
 
     # A missing session-specific offset uses another published offset from
     # the same event. This keeps a partially published schedule usable.
@@ -1622,7 +1520,7 @@ def format_weekend_schedule(
     if last_end_date is not None:
         last_day = max(last_day, last_end_date)
     date_range = (
-        f"{first_day.strftime('%d %b')} – {last_day.strftime('%d %b %Y')}"
+        f"{first_day.strftime('%d %b')} – {last_day.strftime('%d %b %Y')}"  # noqa: RUF001 - rendered date-range punctuation.
         if first_day != last_day
         else first_day.strftime("%d %b %Y")
     )
@@ -1672,7 +1570,6 @@ def get_driver_standings(
     parsed_round: int | None = parse_integer(round)
     for row in rows:
         driver: dict[str, Any] = row.get("Driver", {})
-        nationality = format_value(driver.get("nationality"))
         constructors: list[dict[str, Any]] = row.get("Constructors", [])
         team_names: list[str] = [
             constructor["name"]
@@ -1690,8 +1587,6 @@ def get_driver_standings(
                 "position": format_value(row.get("position")),
                 "given_name": format_value(driver.get("givenName")),
                 "family_name": format_value(driver.get("familyName")),
-                "nationality": nationality,
-                "country_flag": flag_for_nationality(nationality),
                 "team": ", ".join(team_names),
                 "points": format_value(row.get("points")),
                 "team_color": team_color,
@@ -1794,9 +1689,7 @@ def get_team_color(
 
     # Keep a local fallback for seasons without F1 timing data and API outages.
     for constructor in constructors:
-        constructor_id: str = (
-            format_value(constructor.get("constructorId")).lower()
-        )
+        constructor_id: str = format_value(constructor.get("constructorId")).lower()
         if constructor_id in TEAM_COLORS:
             return TEAM_COLORS[constructor_id]
 
@@ -1826,7 +1719,7 @@ def get_f1_session(season: int, round_number: int) -> Session | None:
             "R",
             backend="f1timing",
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - missing timing sessions use local colors.
         # Color lookup must not make standings unavailable.
         return None
 
@@ -1856,7 +1749,7 @@ def get_session_team_color(
             session,
             colormap="official",
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - unknown team names use the fallback palette.
         # Unknown names and missing timing data fall through to the palette.
         return ""
     return color if re.fullmatch(r"#[0-9A-Fa-f]{6}", color) else ""
@@ -1873,7 +1766,7 @@ def parse_integer(value: object) -> int | None:
     """
     try:
         return int(value) if value is not None else None
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 

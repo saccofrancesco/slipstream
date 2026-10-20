@@ -17,6 +17,7 @@ from fastf1.mvapi import get_circuit_info as get_mvapi_circuit_info
 from requests import RequestException
 
 from .api import parse_event_coordinates
+from .catalog import SUPPORTED_SESSION_CODES
 from .openf1 import (
     OPENF1_FIRST_HISTORICAL_SEASON,
     OpenF1CarSample,
@@ -138,6 +139,68 @@ class _LapSamples:
     sector_boundaries: tuple[float, ...]
 
 
+def _empty_session_telemetry(unavailable: list[str]) -> SessionTelemetry:
+    """Build the shared empty result when none of the selected laps loaded."""
+    return {
+        "rows": [],
+        "laps": [],
+        "corners": [],
+        "sectors": [],
+        "track_points": [],
+        "track_segments": [],
+        "track_corners": [],
+        "preserve_orientation": False,
+        "unavailable": unavailable,
+        "baseline_key": "",
+        "distance_metres": 0,
+    }
+
+
+def _telemetry_rows(
+    grid: np.ndarray,
+    available: list[_LapSamples],
+    sampled: dict[str, dict[str, np.ndarray]],
+    baseline: _LapSamples,
+) -> list[dict[str, float | int]]:
+    """Serialize the shared six-channel rows for either timing provider."""
+    baseline_elapsed = sampled[baseline.key]["elapsed"]
+    rows: list[dict[str, float | int]] = []
+    for index, distance in enumerate(grid):
+        row: dict[str, float | int] = {"distance": round(float(distance), 2)}
+        for lap in available:
+            values = sampled[lap.key]
+            key = lap.key
+            row[f"speed_{key}"] = round(float(values["speed"][index]), 1)
+            row[f"delta_{key}"] = round(
+                float(values["elapsed"][index] - baseline_elapsed[index]), 3
+            )
+            row[f"throttle_{key}"] = round(float(values["throttle"][index]), 1)
+            row[f"brake_{key}"] = int(values["brake"][index])
+            row[f"rpm_{key}"] = round(float(values["rpm"][index]))
+            row[f"gear_{key}"] = round(float(values["gear"][index]))
+        rows.append(row)
+    return rows
+
+
+def _serialize_telemetry_laps(
+    available: list[_LapSamples],
+    sampled: dict[str, dict[str, np.ndarray]],
+) -> list[TelemetryLap]:
+    """Serialize the shared lap identity and elapsed-time chart data."""
+    return [
+        {
+            "key": lap.key,
+            "driver": lap.driver,
+            "number": lap.number,
+            "seconds": lap.seconds,
+            "elapsed": [
+                round(float(value), 4) for value in sampled[lap.key]["elapsed"]
+            ],
+        }
+        for lap in available
+    ]
+
+
 @lru_cache(maxsize=1)
 def _cached_session(season: int, round_number: int, session_code: str) -> Session:
     """Keep the last telemetry-loaded FastF1 session in this process."""
@@ -183,9 +246,7 @@ def _lap_samples(lap: Lap, driver: str, number: int) -> _LapSamples:
         raise ValueError("Car telemetry is unavailable")
     distance = _numeric(car["Distance"])
     session_time = car["SessionTime"].dt.total_seconds().to_numpy(dtype=float)
-    elapsed = (car["SessionTime"] - start_time).dt.total_seconds().to_numpy(
-        dtype=float
-    )
+    elapsed = (car["SessionTime"] - start_time).dt.total_seconds().to_numpy(dtype=float)
     channels = [
         distance,
         session_time,
@@ -251,9 +312,7 @@ def _openf1_lap_samples(
         [sample["date"].timestamp() for sample in car_samples], dtype=float
     )
     speed = np.array([sample["speed"] for sample in car_samples], dtype=float)
-    throttle = np.array(
-        [sample["throttle"] for sample in car_samples], dtype=float
-    )
+    throttle = np.array([sample["throttle"] for sample in car_samples], dtype=float)
     brake = np.array([sample["brake"] for sample in car_samples], dtype=float)
     rpm = np.array([sample["rpm"] for sample in car_samples], dtype=float)
     gear = np.array([sample["gear"] for sample in car_samples], dtype=float)
@@ -372,6 +431,43 @@ def _rotate_coordinates(
     return x * cos(angle) + y * sin(angle), -x * sin(angle) + y * cos(angle)
 
 
+def _track_corner_labels(
+    circuit_info: CircuitInfo | None, rotation: float
+) -> list[TelemetryTrackCorner]:
+    """Create the shared rotated corner and label coordinates."""
+    if circuit_info is None or circuit_info.corners.empty:
+        return []
+    corners: list[TelemetryTrackCorner] = []
+    for _, corner in circuit_info.corners.iterrows():
+        try:
+            corner_x = float(corner.get("X"))
+            corner_y = float(corner.get("Y"))
+            number = float(corner.get("Number"))
+            angle = float(corner.get("Angle"))
+        except TypeError, ValueError:
+            continue
+        if not all(isfinite(value) for value in (corner_x, corner_y, number, angle)):
+            continue
+        letter = corner.get("Letter")
+        suffix = "" if pd.isna(letter) else str(letter).strip()
+        offset_angle = angle / 180 * pi
+        label_x = corner_x + cos(offset_angle) * 500
+        label_y = corner_y + sin(offset_angle) * 500
+        rotated_x, rotated_y = _rotate_coordinates(
+            np.array([corner_x, label_x]), np.array([corner_y, label_y]), rotation
+        )
+        corners.append(
+            {
+                "label": f"{int(number)}{suffix}",
+                "track_x": round(float(rotated_x[0]), 3),
+                "track_y": round(float(rotated_y[0]), 3),
+                "label_x": round(float(rotated_x[1]), 3),
+                "label_y": round(float(rotated_y[1]), 3),
+            }
+        )
+    return corners
+
+
 def _mini_sector_segments(
     grid: np.ndarray,
     laps: list[_LapSamples],
@@ -424,7 +520,7 @@ def _track_geometry(
         return [], [], [], False
     try:
         position = baseline.lap.get_pos_data(interpolate_edges=True)
-    except Exception:
+    except Exception:  # noqa: BLE001 - position geometry is optional to car channels.
         return [], [], [], False
     if position.empty:
         return [], [], [], False
@@ -432,9 +528,7 @@ def _track_geometry(
     position_times = position["SessionTime"].dt.total_seconds().to_numpy(dtype=float)
     position_x, position_y = _numeric(position["X"]), _numeric(position["Y"])
     valid = (
-        np.isfinite(position_times)
-        & np.isfinite(position_x)
-        & np.isfinite(position_y)
+        np.isfinite(position_times) & np.isfinite(position_x) & np.isfinite(position_y)
     )
     if valid.sum() < 2:
         return [], [], [], False
@@ -457,7 +551,7 @@ def _track_geometry(
         if circuit_info is not None and isfinite(float(circuit_info.rotation)):
             rotation += float(circuit_info.rotation)
             preserve_orientation = True
-    except Exception:
+    except Exception:  # noqa: BLE001 - use the static rotation if optional MVAPI fails.
         # Position data is still useful when the optional circuit metadata fails.
         circuit_info = None
     trace_x, trace_y = _rotate_coordinates(trace_x, trace_y, rotation)
@@ -466,39 +560,7 @@ def _track_geometry(
         for x, y in zip(trace_x, trace_y, strict=True)
     ]
 
-    corners: list[TelemetryTrackCorner] = []
-    if circuit_info is not None and not circuit_info.corners.empty:
-        for _, corner in circuit_info.corners.iterrows():
-            try:
-                corner_x = float(corner.get("X"))
-                corner_y = float(corner.get("Y"))
-                number = float(corner.get("Number"))
-                angle = float(corner.get("Angle"))
-            except (TypeError, ValueError):
-                continue
-            if not all(
-                isfinite(value) for value in (corner_x, corner_y, number, angle)
-            ):
-                continue
-            letter = corner.get("Letter")
-            suffix = "" if pd.isna(letter) else str(letter).strip()
-            offset_angle = angle / 180 * pi
-            label_x = corner_x + cos(offset_angle) * 500
-            label_y = corner_y + sin(offset_angle) * 500
-            rotated_x, rotated_y = _rotate_coordinates(
-                np.array([corner_x, label_x]),
-                np.array([corner_y, label_y]),
-                rotation,
-            )
-            corners.append(
-                {
-                    "label": f"{int(number)}{suffix}",
-                    "track_x": round(float(rotated_x[0]), 3),
-                    "track_y": round(float(rotated_y[0]), 3),
-                    "label_x": round(float(rotated_x[1]), 3),
-                    "label_y": round(float(rotated_y[1]), 3),
-                }
-            )
+    corners = _track_corner_labels(circuit_info, rotation)
 
     return (
         points,
@@ -515,7 +577,7 @@ def _corner_distances(session: Session, baseline: _LapSamples) -> list[Telemetry
     try:
         info = session.get_circuit_info()
         position = baseline.lap.get_pos_data(interpolate_edges=True)
-    except Exception:
+    except Exception:  # noqa: BLE001 - corner labels are optional to car channels.
         # Corner metadata is optional; keep the six car-data channels usable.
         return []
     if info is None or info.corners.empty or position.empty:
@@ -538,14 +600,14 @@ def _corner_distances(session: Session, baseline: _LapSamples) -> list[Telemetry
             valid_corner = all(
                 isfinite(float(value)) for value in (corner_x, corner_y, number)
             )
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
         if not valid_corner:
             continue
         nearest = int(
             np.argmin((x - float(corner_x)) ** 2 + (y - float(corner_y)) ** 2)
         )
-        distance = int(round(position_distances[nearest]))
+        distance = round(position_distances[nearest])
         if not 0 <= distance <= baseline.distance[-1]:
             continue
         letter = corner.get("Letter")
@@ -573,9 +635,9 @@ def _sector_distances(baseline: _LapSamples) -> list[TelemetrySector]:
             <= baseline.session_time[-1]
         ):
             continue
-        distance = int(round(float(np.interp(
-            boundary_seconds, baseline.session_time, baseline.distance
-        ))))
+        distance = round(
+            float(np.interp(boundary_seconds, baseline.session_time, baseline.distance))
+        )
         sectors.append({"label": label, "distance": distance})
     return sectors
 
@@ -601,23 +663,11 @@ def _get_fastf1_session_telemetry(
             continue
         try:
             available.append(_lap_samples(matching.iloc[0], driver, number))
-        except (ValueError, KeyError, TypeError, IndexError, DataNotLoadedError):
+        except ValueError, KeyError, TypeError, IndexError, DataNotLoadedError:
             unavailable.append(label)
 
     if not available:
-        return {
-            "rows": [],
-            "laps": [],
-            "corners": [],
-            "sectors": [],
-            "track_points": [],
-            "track_segments": [],
-            "track_corners": [],
-            "preserve_orientation": False,
-            "unavailable": unavailable,
-            "baseline_key": "",
-            "distance_metres": 0,
-        }
+        return _empty_session_telemetry(unavailable)
 
     baseline = min(available, key=lambda lap: lap.seconds)
     length = float(baseline.distance[-1])
@@ -628,40 +678,12 @@ def _get_fastf1_session_telemetry(
         track_segments,
         track_corners,
         preserve_orientation,
-    ) = _track_geometry(
-        session, baseline, grid, available, sampled, circuit_name
-    )
-    baseline_elapsed = sampled[baseline.key]["elapsed"]
-    rows: list[dict[str, float | int]] = []
-    for index, distance in enumerate(grid):
-        row: dict[str, float | int] = {"distance": round(float(distance), 2)}
-        for lap in available:
-            values = sampled[lap.key]
-            key = lap.key
-            row[f"speed_{key}"] = round(float(values["speed"][index]), 1)
-            row[f"delta_{key}"] = round(
-                float(values["elapsed"][index] - baseline_elapsed[index]), 3
-            )
-            row[f"throttle_{key}"] = round(float(values["throttle"][index]), 1)
-            row[f"brake_{key}"] = int(values["brake"][index])
-            row[f"rpm_{key}"] = int(round(float(values["rpm"][index])))
-            row[f"gear_{key}"] = int(round(float(values["gear"][index])))
-        rows.append(row)
+    ) = _track_geometry(session, baseline, grid, available, sampled, circuit_name)
+    rows = _telemetry_rows(grid, available, sampled, baseline)
 
     return {
         "rows": rows,
-        "laps": [
-            {
-                "key": lap.key,
-                "driver": lap.driver,
-                "number": lap.number,
-                "seconds": lap.seconds,
-                "elapsed": [
-                    round(float(value), 4) for value in sampled[lap.key]["elapsed"]
-                ],
-            }
-            for lap in available
-        ],
+        "laps": _serialize_telemetry_laps(available, sampled),
         "corners": _corner_distances(session, baseline),
         "sectors": _sector_distances(baseline),
         "track_points": track_points,
@@ -697,9 +719,7 @@ def _openf1_track_geometry(
     position_x = np.array([sample["x"] for sample in locations], dtype=float)
     position_y = np.array([sample["y"] for sample in locations], dtype=float)
     valid = (
-        np.isfinite(position_times)
-        & np.isfinite(position_x)
-        & np.isfinite(position_y)
+        np.isfinite(position_times) & np.isfinite(position_x) & np.isfinite(position_y)
     )
     if valid.sum() < 2:
         return [], [], [], False
@@ -723,39 +743,7 @@ def _openf1_track_geometry(
         preserve_orientation = True
     trace_x, trace_y = _rotate_coordinates(trace_x, trace_y, rotation)
 
-    corners: list[TelemetryTrackCorner] = []
-    if circuit_info is not None and not circuit_info.corners.empty:
-        for _, corner in circuit_info.corners.iterrows():
-            try:
-                corner_x = float(corner.get("X"))
-                corner_y = float(corner.get("Y"))
-                number = float(corner.get("Number"))
-                angle = float(corner.get("Angle"))
-            except (TypeError, ValueError):
-                continue
-            if not all(
-                isfinite(value) for value in (corner_x, corner_y, number, angle)
-            ):
-                continue
-            letter = corner.get("Letter")
-            suffix = "" if pd.isna(letter) else str(letter).strip()
-            offset_angle = angle / 180 * pi
-            label_x = corner_x + cos(offset_angle) * 500
-            label_y = corner_y + sin(offset_angle) * 500
-            rotated_x, rotated_y = _rotate_coordinates(
-                np.array([corner_x, label_x]),
-                np.array([corner_y, label_y]),
-                rotation,
-            )
-            corners.append(
-                {
-                    "label": f"{int(number)}{suffix}",
-                    "track_x": round(float(rotated_x[0]), 3),
-                    "track_y": round(float(rotated_y[0]), 3),
-                    "label_x": round(float(rotated_x[1]), 3),
-                    "label_y": round(float(rotated_y[1]), 3),
-                }
-            )
+    corners = _track_corner_labels(circuit_info, rotation)
     return (
         [
             {"x": round(float(x), 3), "y": round(float(y), 3)}
@@ -783,13 +771,9 @@ def _openf1_corner_distances(
     valid = np.isfinite(position_times) & np.isfinite(x) & np.isfinite(y)
     if valid.sum() < 2:
         return []
-    position_times, x, y = (
-        channel[valid] for channel in (position_times, x, y)
-    )
+    position_times, x, y = (channel[valid] for channel in (position_times, x, y))
     order = np.argsort(position_times)
-    position_times, x, y = (
-        channel[order] for channel in (position_times, x, y)
-    )
+    position_times, x, y = (channel[order] for channel in (position_times, x, y))
     position_distances = np.interp(
         position_times, baseline.session_time, baseline.distance
     )
@@ -799,12 +783,12 @@ def _openf1_corner_distances(
             corner_x = float(corner.get("X"))
             corner_y = float(corner.get("Y"))
             number = float(corner.get("Number"))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
         if not all(isfinite(value) for value in (corner_x, corner_y, number)):
             continue
         nearest = int(np.argmin((x - corner_x) ** 2 + (y - corner_y) ** 2))
-        distance = int(round(float(position_distances[nearest])))
+        distance = round(float(position_distances[nearest]))
         if not 0 <= distance <= baseline.distance[-1]:
             continue
         letter = corner.get("Letter")
@@ -819,8 +803,8 @@ def _openf1_sector_distances(baseline: _LapSamples) -> list[TelemetrySector]:
     return [
         {
             "label": label,
-            "distance": int(
-                round(float(np.interp(boundary, baseline.elapsed, baseline.distance)))
+            "distance": round(
+                float(np.interp(boundary, baseline.elapsed, baseline.distance))
             ),
         }
         for label, boundary in zip(
@@ -845,29 +829,13 @@ def _get_openf1_session_telemetry(
             session_key, lap = find_openf1_lap(
                 season, round_number, session_code, driver, number
             )
-            car_samples = get_openf1_car_data(
-                session_key, lap["driver_number"], lap
-            )
-            available.append(
-                _openf1_lap_samples(lap, car_samples, driver, number)
-            )
-        except (LookupError, ValueError, KeyError, TypeError, IndexError):
+            car_samples = get_openf1_car_data(session_key, lap["driver_number"], lap)
+            available.append(_openf1_lap_samples(lap, car_samples, driver, number))
+        except LookupError, ValueError, KeyError, TypeError, IndexError:
             unavailable.append(label)
 
     if not available:
-        return {
-            "rows": [],
-            "laps": [],
-            "corners": [],
-            "sectors": [],
-            "track_points": [],
-            "track_segments": [],
-            "track_corners": [],
-            "preserve_orientation": False,
-            "unavailable": unavailable,
-            "baseline_key": "",
-            "distance_metres": 0,
-        }
+        return _empty_session_telemetry(unavailable)
 
     baseline = min(available, key=lambda lap: lap.seconds)
     length = float(baseline.distance[-1])
@@ -877,22 +845,20 @@ def _get_openf1_session_telemetry(
     circuit_info: CircuitInfo | None = None
     if baseline.openf1_lap is not None:
         try:
-            session_key = get_openf1_session_key(
-                season, round_number, session_code
-            )
+            session_key = get_openf1_session_key(season, round_number, session_code)
             locations = get_openf1_location_data(
                 session_key,
                 baseline.openf1_lap["driver_number"],
                 baseline.openf1_lap,
             )
-        except (LookupError, ValueError, KeyError, TypeError, RequestException):
+        except LookupError, ValueError, KeyError, TypeError, RequestException:
             # The six charts remain useful if optional position samples fail.
             locations = []
     try:
         circuit_info = _openf1_circuit_info(
             season, get_openf1_circuit_key(season, round_number)
         )
-    except (LookupError, ValueError, KeyError, TypeError, RequestException):
+    except LookupError, ValueError, KeyError, TypeError, RequestException:
         # Track geometry remains usable without optional corner labels.
         circuit_info = None
     (
@@ -903,37 +869,11 @@ def _get_openf1_session_telemetry(
     ) = _openf1_track_geometry(
         baseline, grid, available, sampled, locations, circuit_info, circuit_name
     )
-    baseline_elapsed = sampled[baseline.key]["elapsed"]
-    rows: list[dict[str, float | int]] = []
-    for index, distance in enumerate(grid):
-        row: dict[str, float | int] = {"distance": round(float(distance), 2)}
-        for lap in available:
-            values = sampled[lap.key]
-            key = lap.key
-            row[f"speed_{key}"] = round(float(values["speed"][index]), 1)
-            row[f"delta_{key}"] = round(
-                float(values["elapsed"][index] - baseline_elapsed[index]), 3
-            )
-            row[f"throttle_{key}"] = round(float(values["throttle"][index]), 1)
-            row[f"brake_{key}"] = int(values["brake"][index])
-            row[f"rpm_{key}"] = int(round(float(values["rpm"][index])))
-            row[f"gear_{key}"] = int(round(float(values["gear"][index])))
-        rows.append(row)
+    rows = _telemetry_rows(grid, available, sampled, baseline)
 
     return {
         "rows": rows,
-        "laps": [
-            {
-                "key": lap.key,
-                "driver": lap.driver,
-                "number": lap.number,
-                "seconds": lap.seconds,
-                "elapsed": [
-                    round(float(value), 4) for value in sampled[lap.key]["elapsed"]
-                ],
-            }
-            for lap in available
-        ],
+        "laps": _serialize_telemetry_laps(available, sampled),
         "corners": _openf1_corner_distances(baseline, locations, circuit_info),
         "sectors": _openf1_sector_distances(baseline),
         "track_points": track_points,
@@ -958,7 +898,7 @@ def get_session_telemetry(
     if coordinates is None:
         raise ValueError("A supported numeric season and round are required")
     parsed_season, parsed_round = coordinates
-    if session_code not in {"FP1", "FP2", "FP3", "SQ", "SS", "S", "Q", "R"}:
+    if session_code not in SUPPORTED_SESSION_CODES:
         raise ValueError("The requested session is not supported")
     unique_laps = tuple(dict.fromkeys(selected_laps))
     if len(unique_laps) > MAX_SELECTED_TELEMETRY_LAPS:
@@ -968,12 +908,22 @@ def get_session_telemetry(
 
     if parsed_season >= OPENF1_FIRST_HISTORICAL_SEASON:
         try:
-            return _get_openf1_session_telemetry(
+            openf1_telemetry = _get_openf1_session_telemetry(
                 parsed_season,
                 parsed_round,
                 session_code,
                 unique_laps,
                 circuit_name,
+            )
+            if not unique_laps or openf1_telemetry["rows"]:
+                return openf1_telemetry
+            logger.warning(
+                "OpenF1 returned no telemetry rows; trying the FastF1 fallback",
+                extra={
+                    "season": parsed_season,
+                    "round": parsed_round,
+                    "session": session_code,
+                },
             )
         except Exception:
             logger.warning(

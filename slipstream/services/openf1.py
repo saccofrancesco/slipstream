@@ -3,14 +3,18 @@
 import re
 import unicodedata
 from collections import deque
-from datetime import date, datetime, timedelta, timezone
-from functools import lru_cache
+from collections.abc import Callable, Hashable
+from datetime import UTC, date, datetime, timedelta
+from functools import wraps
 from math import isfinite
 from threading import Lock
 from time import monotonic, sleep
-from typing import Any, TypedDict
+from typing import Any, ParamSpec, TypedDict, TypeVar, cast
 
 import requests
+
+from .cache import TTLCache
+from .catalog import OPENF1_SESSION_NAMES
 
 OPENF1_BASE_URL: str = "https://api.openf1.org/v1"
 JOLPICA_BASE_URL: str = "https://api.jolpi.ca/ergast/f1"
@@ -27,6 +31,50 @@ _HTTP_SESSION.headers.update(
 _RATE_LIMIT_LOCK: Lock = Lock()
 _HTTP_LOCK: Lock = Lock()
 _REQUEST_TIMES: deque[float] = deque()
+_OPENF1_CACHE: TTLCache = TTLCache(maxsize=256)
+_OPENF1_CACHE_TTL_SECONDS: int = 15 * 60
+_OPENF1_SAMPLE_TTL_SECONDS: int = 60
+
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+def _freeze_cache_key(value: object) -> Hashable:
+    """Convert provider arguments, including lap mappings, to stable keys."""
+    if isinstance(value, dict):
+        return tuple(
+            sorted((str(key), _freeze_cache_key(item)) for key, item in value.items())
+        )
+    if isinstance(value, (tuple, list)):
+        return tuple(_freeze_cache_key(item) for item in value)
+    return cast(Hashable, value)
+
+
+def _openf1_cached(
+    ttl_seconds: int = _OPENF1_CACHE_TTL_SECONDS,
+) -> Callable[[Callable[P, R]], Callable[P, R]]:
+    """Cache provider reads for a bounded freshness window."""
+
+    def decorate(function: Callable[P, R]) -> Callable[P, R]:
+        @wraps(function)
+        def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
+            cache_key = (
+                function.__name__,
+                _freeze_cache_key(args),
+                _freeze_cache_key(tuple(sorted(kwargs.items()))),
+            )
+            return cast(
+                R,
+                _OPENF1_CACHE.get_or_load(
+                    cache_key,
+                    ttl_seconds,
+                    lambda: function(*args, **kwargs),
+                ),
+            )
+
+        return wrapped
+
+    return decorate
 
 
 class OpenF1Driver(TypedDict):
@@ -97,18 +145,6 @@ class OpenF1LocationSample(TypedDict):
     y: float
 
 
-_SESSION_NAMES: dict[str, tuple[str, ...]] = {
-    "FP1": ("Practice 1",),
-    "FP2": ("Practice 2",),
-    "FP3": ("Practice 3",),
-    "SQ": ("Sprint Qualifying", "Sprint Shootout"),
-    "SS": ("Sprint Shootout", "Sprint Qualifying"),
-    "S": ("Sprint",),
-    "Q": ("Qualifying",),
-    "R": ("Race",),
-}
-
-
 def _wait_for_rate_limit() -> None:
     """Reserve one request within OpenF1's 3/second and 30/minute limits."""
     with _RATE_LIMIT_LOCK:
@@ -162,7 +198,7 @@ def _integer(value: object) -> int | None:
         return None
     try:
         parsed = int(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
     return parsed
 
@@ -173,7 +209,7 @@ def _number(value: object) -> float | None:
         return None
     try:
         parsed = float(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
     return parsed if isfinite(parsed) else None
 
@@ -183,15 +219,15 @@ def _timestamp(value: object) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value)
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
     return parsed
 
 
-@lru_cache(maxsize=8)
+@_openf1_cached()
 def _race_meetings(season: int) -> tuple[OpenF1Meeting, ...]:
     """Return chronological Grand Prix meetings for one season."""
     rows = _request_rows("meetings", {"year": season})
@@ -226,7 +262,7 @@ def _normalized_event_name(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", ascii_value.decode().lower()).strip()
 
 
-@lru_cache(maxsize=64)
+@_openf1_cached()
 def _jolpica_event_identity(season: int, round_number: int) -> tuple[str, date]:
     """Load the official race name/date used by Slipstream's archive route."""
     with _HTTP_LOCK:
@@ -275,7 +311,7 @@ def _resolve_meeting(season: int, round_number: int) -> OpenF1Meeting:
     raise LookupError("The requested OpenF1 meeting could not be found")
 
 
-@lru_cache(maxsize=64)
+@_openf1_cached()
 def _meeting_sessions(meeting_key: int) -> tuple[tuple[str, int, bool], ...]:
     """Return stable session names, keys, and cancellation flags for a meeting."""
     sessions: list[tuple[str, int, bool]] = []
@@ -287,12 +323,12 @@ def _meeting_sessions(meeting_key: int) -> tuple[tuple[str, int, bool], ...]:
     return tuple(sessions)
 
 
-@lru_cache(maxsize=64)
+@_openf1_cached()
 def get_openf1_session_key(season: int, round_number: int, session_code: str) -> int:
     """Resolve Slipstream's season/round/session coordinates to OpenF1."""
     if season < OPENF1_FIRST_HISTORICAL_SEASON:
         raise LookupError("OpenF1 historical data starts with the 2023 season")
-    expected_names = _SESSION_NAMES.get(session_code)
+    expected_names = OPENF1_SESSION_NAMES.get(session_code)
     if expected_names is None:
         raise ValueError("The requested session is not supported")
 
@@ -312,7 +348,7 @@ def get_openf1_circuit_key(season: int, round_number: int) -> int:
     return _resolve_meeting(season, round_number)["circuit_key"]
 
 
-@lru_cache(maxsize=64)
+@_openf1_cached()
 def _session_drivers(session_key: int) -> tuple[OpenF1Driver, ...]:
     """Load and normalize stable driver metadata for one session."""
     drivers: list[OpenF1Driver] = []
@@ -340,7 +376,7 @@ def _session_drivers(session_key: int) -> tuple[OpenF1Driver, ...]:
     return tuple(drivers)
 
 
-@lru_cache(maxsize=32)
+@_openf1_cached()
 def _session_laps(session_key: int) -> tuple[OpenF1Lap, ...]:
     """Load completed timed laps for one historical session."""
     laps: list[OpenF1Lap] = []
@@ -372,7 +408,7 @@ def _session_laps(session_key: int) -> tuple[OpenF1Lap, ...]:
     return tuple(laps)
 
 
-@lru_cache(maxsize=32)
+@_openf1_cached()
 def _session_stints(session_key: int) -> tuple[OpenF1Stint, ...]:
     """Load tyre stints for one historical session."""
     stints: list[OpenF1Stint] = []
@@ -443,6 +479,7 @@ def find_openf1_lap(
     return session_key, lap
 
 
+@_openf1_cached(ttl_seconds=_OPENF1_SAMPLE_TTL_SECONDS)
 def get_openf1_car_data(
     session_key: int, driver_number: int, lap: OpenF1Lap
 ) -> list[OpenF1CarSample]:
@@ -491,6 +528,7 @@ def get_openf1_car_data(
     return samples
 
 
+@_openf1_cached(ttl_seconds=_OPENF1_SAMPLE_TTL_SECONDS)
 def get_openf1_location_data(
     session_key: int, driver_number: int, lap: OpenF1Lap
 ) -> list[OpenF1LocationSample]:
