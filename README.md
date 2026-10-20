@@ -114,7 +114,7 @@ Slipstream uses the following libraries and data sources:
 
 Check out another project by the same author:
 
-* [DeepShot](https://github.com/saccofrancesco/supremebot): An NBA game prediction model software built with [XGBoost](https://xgboost.readthedocs.io/en/release_3.0.0/) and [NiceGUI](https://nicegui.io/).
+* [DeepShot](https://github.com/saccofrancesco/deepshot): An NBA game prediction model software built with [XGBoost](https://xgboost.readthedocs.io/en/release_3.0.0/) and [NiceGUI](https://nicegui.io/).
 * [Supremebot](https://github.com/saccofrancesco/supremebot): A Supreme shopping assistant built with [NiceGUI](https://nicegui.io/).
 
 ---
