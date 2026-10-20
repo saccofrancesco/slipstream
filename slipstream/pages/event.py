@@ -448,7 +448,11 @@ class EventState(rx.State):
 
     @rx.var
     def telemetry_track_points(self) -> list[TrackmapPoint]:
-        """Pair reference-lap coordinates with chart-aligned distances."""
+        """Pair complete reference-lap coordinates with chart distances."""
+        if len(self.telemetry_track_point_rows) != len(self.telemetry_rows):
+            # Track position data is optional; keep the channel charts usable
+            # when a provider returns car data without a complete position trace.
+            return []
         return [
             {
                 "x": float(point["x"]),
