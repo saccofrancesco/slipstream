@@ -11,7 +11,6 @@ from .api import (
     ScheduledSession,
     SessionLaps,
     SessionOption,
-    TrackSessionDetails,
     format_weekend_schedule,
     get_available_seasons,
     get_completed_races,
@@ -22,8 +21,6 @@ from .api import (
     get_race_weekend,
     get_session_classification,
     get_session_laps,
-    get_track_session_details,
-    get_track_time_offsets,
     has_session_results,
 )
 from .telemetry import (
@@ -55,7 +52,6 @@ __all__: list[str] = [
     "TelemetryTrackCorner",
     "TelemetryTrackPoint",
     "TelemetryTrackSegment",
-    "TrackSessionDetails",
     "format_weekend_schedule",
     "get_available_seasons",
     "get_completed_races",
@@ -67,7 +63,5 @@ __all__: list[str] = [
     "get_session_classification",
     "get_session_laps",
     "get_session_telemetry",
-    "get_track_session_details",
-    "get_track_time_offsets",
     "has_session_results",
 ]
