@@ -25,14 +25,12 @@ from slipstream.services import (
     RaceWeekend,
     ScheduleDay,
     ScheduledSession,
-    TrackSessionDetails,
     format_weekend_schedule,
 )
 from slipstream.services.cached import (
     get_cached_past_events,
     get_cached_race_weekend,
     get_cached_session_results,
-    get_cached_track_session_details,
 )
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -172,11 +170,6 @@ class ResultsState(rx.State):
                 get_cached_race_weekend, current_date
             )
             if weekend is not None:
-                track_details: dict[str, TrackSessionDetails] = await asyncio.to_thread(
-                    get_cached_track_session_details,
-                    weekend["season"],
-                    weekend["round"],
-                )
                 self.archive_season = weekend["season"]
                 # Keep the card's scalar values separate from its list of
                 # schedule rows, which has a different state type.
@@ -191,22 +184,7 @@ class ResultsState(rx.State):
                     "country_flag": weekend["country_flag"],
                     "date_range": weekend["date_range"],
                 }
-                schedule_days: list[ScheduleDay] = []
-                for day in weekend["schedule_days"]:
-                    sessions_with_details: list[ScheduledSession] = []
-                    for session in day["sessions"]:
-                        details = track_details.get(session["name"])
-                        sessions_with_details.append(
-                            {
-                                **session,
-                                "track_offset_minutes": (
-                                    details["offset_minutes"] if details else None
-                                ),
-                                "ends_at": details["ends_at"] if details else "",
-                            }
-                        )
-                    schedule_days.append({**day, "sessions": sessions_with_details})
-                self.schedule_days = schedule_days
+                self.schedule_days = weekend["schedule_days"]
                 if weekend["status"] == "current":
                     # Only published driver rows make a session linkable.
                     # Wait for every independent check before showing the card.
