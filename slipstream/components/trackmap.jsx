@@ -1,6 +1,8 @@
 import React from "react";
 import { ReferenceLine } from "recharts";
 
+// rx.asset versions this file by content, so this change refreshes cached copies
+// transformed before Vite deduplicated React for the Reflex renderer.
 const PlaybackContext = React.createContext({
   enabled: false,
   currentTime: 0,
