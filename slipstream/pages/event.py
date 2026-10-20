@@ -42,8 +42,8 @@ from slipstream.services import (
     LapDriver,
     LapPoint,
     SessionLaps,
-    SessionTelemetry,
     SessionOption,
+    SessionTelemetry,
     TelemetryCorner,
     TelemetryLap,
     TelemetrySector,
@@ -57,15 +57,8 @@ from slipstream.services.cached import (
     get_cached_session_classification,
     get_cached_session_laps,
 )
+from slipstream.services.catalog import TYRE_ICON_PATHS
 from slipstream.services.telemetry import MAX_SELECTED_TELEMETRY_LAPS
-
-TYRE_ICON_PATHS: dict[str, str] = {
-    "SOFT": "/tyres/soft.svg",
-    "MEDIUM": "/tyres/medium.svg",
-    "HARD": "/tyres/hard.svg",
-    "INTERMEDIATE": "/tyres/intermediate.svg",
-    "WET": "/tyres/wet.svg",
-}
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -218,9 +211,7 @@ class EventState(rx.State):
     def visible_lap_points(self) -> list[LapPoint]:
         """Apply the outlier switch before building chart lines and markers."""
         return [
-            lap
-            for lap in self.lap_points
-            if self.show_outliers or not lap["outlier"]
+            lap for lap in self.lap_points if self.show_outliers or not lap["outlier"]
         ]
 
     @rx.var
@@ -397,14 +388,10 @@ class EventState(rx.State):
             metadata = driver_by_code.get(driver)
             team = (metadata["team"] or driver) if metadata else driver
             if driver not in color_by_driver:
-                team_color = (
-                    metadata["team_color"] if metadata else "var(--gray-12)"
-                )
+                team_color = metadata["team_color"] if metadata else "var(--gray-12)"
                 if driver in active_chip_colors:
                     color = active_chip_colors[driver]
-                elif team in first_selected_by_team:
-                    color = "var(--gray-12)"
-                elif team in first_plotted_by_team:
+                elif team in first_selected_by_team or team in first_plotted_by_team:
                     color = "var(--gray-12)"
                 else:
                     color = team_color
@@ -413,13 +400,10 @@ class EventState(rx.State):
             color = color_by_driver[driver]
             repeat = repeats_by_driver.get(driver, 0)
             repeats_by_driver[driver] = repeat + 1
-            seconds = float(lap["seconds"])
-            minutes = int(seconds // 60)
             lines.append(
                 {
                     "key": key,
                     "label": f"{driver} - Lap {lap['number']}",
-                    "time": f"{minutes}:{seconds - minutes * 60:06.3f}",
                     "color": color,
                     "dash": dash_styles[repeat % len(dash_styles)],
                     "baseline": key == self.telemetry_baseline_key,
@@ -456,7 +440,6 @@ class EventState(rx.State):
                     "key": lap["key"],
                     "label": line["label"],
                     "color": line["color"],
-                    "baseline": line["baseline"],
                     "duration": float(lap["seconds"]),
                     "elapsed": elapsed,
                 }
@@ -481,9 +464,7 @@ class EventState(rx.State):
     def telemetry_track_segments(self) -> list[TrackmapSegment]:
         """Resolve colors and merge adjacent mini-sectors won by one driver."""
         colors = {line["key"]: line["color"] for line in self.telemetry_lines}
-        drivers = {
-            str(lap["key"]): str(lap["driver"]) for lap in self.telemetry_laps
-        }
+        drivers = {str(lap["key"]): str(lap["driver"]) for lap in self.telemetry_laps}
         merged: list[TrackmapSegment] = []
         for segment in self.telemetry_track_segment_rows:
             winner_key = str(segment["winner_key"])
@@ -585,7 +566,7 @@ class EventState(rx.State):
         self.telemetry_error = ""
 
     @rx.event
-    async def change_tab(self, tab: str) -> AsyncGenerator[EventSpec | None, None]:
+    async def change_tab(self, tab: str) -> AsyncGenerator[EventSpec | None]:
         """Load lap or telemetry data when its tab becomes active."""
         self.active_tab = tab
         if tab == "telemetry":
@@ -610,12 +591,10 @@ class EventState(rx.State):
             async for update in self._load_telemetry():
                 yield update
 
-    async def _load_telemetry(self) -> AsyncGenerator[EventSpec | None, None]:
+    async def _load_telemetry(self) -> AsyncGenerator[EventSpec | None]:
         """Fetch the current lap pool without blocking tab interaction."""
         request_key = self._telemetry_selection_key()
-        requested_laps = [
-            (lap["driver"], lap["number"]) for lap in self.selected_laps
-        ]
+        requested_laps = [(lap["driver"], lap["number"]) for lap in self.selected_laps]
         started_at: float = monotonic()
         self.telemetry_loading = True
         self.telemetry_error = ""
@@ -670,7 +649,7 @@ class EventState(rx.State):
             )
 
     @rx.event
-    async def retry_telemetry(self) -> AsyncGenerator[EventSpec | None, None]:
+    async def retry_telemetry(self) -> AsyncGenerator[EventSpec | None]:
         """Retry the current lap pool after a telemetry load failure."""
         if not self.selected_laps or self.telemetry_loading:
             return
@@ -700,8 +679,7 @@ class EventState(rx.State):
     def toggle_lap(self, code: str, number: int) -> EventSpec | None:
         """Toggle a timed lap in the current session's telemetry pool."""
         if not any(
-            lap["driver"] == code and lap["number"] == number
-            for lap in self.lap_points
+            lap["driver"] == code and lap["number"] == number for lap in self.lap_points
         ):
             return None
 
@@ -751,7 +729,7 @@ class EventState(rx.State):
         self.show_outliers = value
 
     @rx.event
-    async def load_event(self) -> AsyncGenerator[None, None]:
+    async def load_event(self) -> AsyncGenerator[None]:
         """Load route event metadata, then its default Race classification."""
         self._event_request_generation += 1
         request_generation: int = self._event_request_generation
@@ -805,7 +783,6 @@ class EventState(rx.State):
             "season": details["season"],
             "round": details["round"],
             "race_name": details["race_name"],
-            "race_date": details["race_date"],
             "circuit_name": details["circuit_name"],
             "locality": details["locality"],
             "country": details["country"],
@@ -830,7 +807,7 @@ class EventState(rx.State):
     @rx.event
     async def select_session(
         self, session_code: str
-    ) -> AsyncGenerator[EventSpec | None, None]:
+    ) -> AsyncGenerator[EventSpec | None]:
         """Replace the visible classification with a selected session's rows.
 
         Args:
@@ -963,9 +940,7 @@ class EventState(rx.State):
 
         self.classification = rows
         if not rows:
-            self.error = (
-                "The timing feed has not published results for this session."
-            )
+            self.error = "The timing feed has not published results for this session."
 
 
 @rx.page(
@@ -1110,9 +1085,7 @@ def event_results() -> rx.Component:
                         loading_card(
                             "Looking up the event schedule and session results…"
                         ),
-                        status_card(
-                            "Event unavailable", EventState.error
-                        ),
+                        status_card("Event unavailable", EventState.error),
                     ),
                 ),
                 align="stretch",

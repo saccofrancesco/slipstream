@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import reflex as rx
 from reflex.event import EventSpec
+
 from slipstream.components import (
     container,
     loading_card,
@@ -134,7 +135,7 @@ class ResultsState(rx.State):
         """Accept a browser timezone when the server can format it."""
         try:
             ZoneInfo(timezone_name)
-        except (TypeError, ValueError, ZoneInfoNotFoundError):
+        except TypeError, ValueError, ZoneInfoNotFoundError:
             self.viewer_timezone = "UTC"
         else:
             self.viewer_timezone = timezone_name
@@ -145,7 +146,7 @@ class ResultsState(rx.State):
         self.track_time = enabled and self.track_time_available
 
     @rx.event
-    async def load_race_weekend(self) -> AsyncGenerator[None, None]:
+    async def load_race_weekend(self) -> AsyncGenerator[None]:
         """Load the weekend with available result links, then its archive.
 
         Yields:
@@ -309,9 +310,7 @@ def results() -> rx.Component:
                     loading_card("Preparing the race weekend schedule…"),
                     rx.cond(
                         ResultsState.error != "",
-                        status_card(
-                            "Weekend overview unavailable", ResultsState.error
-                        ),
+                        status_card("Weekend overview unavailable", ResultsState.error),
                         rx.cond(
                             ResultsState.has_race_weekend,
                             race_weekend_card(

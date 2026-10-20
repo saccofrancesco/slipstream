@@ -1,124 +1,33 @@
-"""Driver championship page and its loading state."""
+"""Driver championship route and its page-specific state."""
 
-import asyncio
-import logging
-from collections.abc import AsyncGenerator
+from typing import ClassVar, Literal
 
-# Reflex provides state, event, and component primitives for this page.
 import reflex as rx
 
-# Reuse shared presentation components and the driver standings service.
-from slipstream.components import container, navbar, page_header
-from slipstream.components.championship import championship_section
-from slipstream.services.cached import (
-    get_cached_available_seasons,
-    get_cached_completed_races,
-    get_cached_driver_standings,
-)
+from slipstream.components.championship import championship_page
 
-logger: logging.Logger = logging.getLogger(__name__)
+from .championship import ChampionshipState
 
 
-class DriversState(rx.State):
-    """Hold the latest driver standings and page feedback."""
+class DriversState(ChampionshipState):
+    """Configure shared championship loading for driver standings."""
 
-    standings: list[dict[str, str]] = []
-    loading: bool = False
-    error: str = ""
-
-    @rx.var
-    def podium_standings(self) -> list[dict[str, str]]:
-        """Return the first three driver standings for the podium."""
-        return self.standings[:3]
-
-    @rx.var
-    def remaining_standings(self) -> list[dict[str, str]]:
-        """Return driver standings after the first three entries."""
-        return self.standings[3:]
-
-    @rx.var
-    def has_remaining_standings(self) -> bool:
-        """Report whether rows remain after the podium."""
-        return len(self.standings) > 3
-
-    @rx.var
-    def has_standings(self) -> bool:
-        """Report whether any driver standings were loaded."""
-        return bool(self.standings)
-
-    @rx.event
-    async def load_standings(self) -> AsyncGenerator[None, None]:
-        """Load the newest completed race's driver standings.
-
-        Yields:
-            A state update after loading begins so the page can show its spinner.
-        """
-        # Set the loading state before starting the network request.
-        self.loading = True
-        self.error = ""
-        self.standings = []
-        yield
-        try:
-            # Run the blocking API client call outside the event loop.
-            seasons = await asyncio.to_thread(get_cached_available_seasons)
-            if not seasons:
-                self.error = "Championship data is not available yet."
-                return
-            season = seasons[0]
-            races = await asyncio.to_thread(get_cached_completed_races, season)
-            if not races:
-                self.error = "No completed races are available yet."
-                return
-            latest_race = races[-1]
-            self.standings = await asyncio.to_thread(
-                get_cached_driver_standings,
-                int(season),
-                int(latest_race["round"]),
-            )
-            if not self.standings:
-                self.error = "No driver standings are available for this race."
-        except Exception:
-            # Keep the UI usable and show a short message if loading fails.
-            logger.exception("Could not load driver championship data")
-            self.standings = []
-            self.error = "Could not load driver championship data. Please try again."
-        finally:
-            # Clear the loading indicator on both success and failure.
-            self.loading = False
+    championship_kind: ClassVar[Literal["driver"]] = "driver"
 
 
 @rx.page("/drivers", "Drivers", on_load=DriversState.load_standings)
 def drivers() -> rx.Component:
-    """Render the driver championship page.
-
-    Returns:
-        A page with the latest driver standings snapshot.
-    """
-    return rx.vstack(
-        navbar(active_section="drivers"),
-        container(
-            rx.vstack(
-                page_header(
-                    "Driver championship",
-                    "Drivers’ Championship",
-                    "Latest driver championship standings.",
-                ),
-                championship_section(
-                    DriversState.podium_standings,
-                    DriversState.remaining_standings,
-                    DriversState.has_remaining_standings,
-                    DriversState.has_standings,
-                    DriversState.loading,
-                    DriversState.error,
-                    is_driver=True,
-                ),
-                align="stretch",
-                spacing="6",
-                width="100%",
-            ),
-        ),
-        width="100%",
-        align="center",
-        min_height="100vh",
-        spacing="0",
+    """Render the latest driver championship standings."""
+    return championship_page(
+        DriversState.podium_standings,
+        DriversState.remaining_standings,
+        DriversState.has_remaining_standings,
+        DriversState.has_standings,
+        DriversState.loading,
+        DriversState.error,
+        active_section="drivers",
+        eyebrow="Driver championship",
+        title="Drivers’ Championship",  # noqa: RUF001 - typographic apostrophe.
+        description="Latest driver championship standings.",
+        is_driver=True,
     )
