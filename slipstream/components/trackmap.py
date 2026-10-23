@@ -42,6 +42,7 @@ class TrackmapPlaybackLap(TypedDict):
     label: str
     color: str
     duration: float
+    start_index: int
     elapsed: list[float]
 
 

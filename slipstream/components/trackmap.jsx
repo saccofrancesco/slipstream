@@ -341,8 +341,10 @@ export function Trackmap({
 
 function lapPositionAtTime(lap, points, currentTime) {
   const elapsed = lap.elapsed;
-  if (currentTime <= 0) return points[0];
-  if (currentTime >= lap.duration) return points[points.length - 1];
+  const startIndex = Math.max(0, Math.floor(finiteNumber(lap.start_index)));
+  const lastIndex = Math.min(points.length - 1, startIndex + elapsed.length - 1);
+  if (currentTime <= 0) return points[startIndex];
+  if (currentTime >= lap.duration) return points[lastIndex];
 
   let low = 0;
   let high = elapsed.length - 1;
@@ -362,8 +364,8 @@ function lapPositionAtTime(lap, points, currentTime) {
           Math.max(0, (currentTime - elapsed[lowerIndex]) / span),
         )
       : 0;
-  const first = points[lowerIndex];
-  const second = points[upperIndex];
+  const first = points[startIndex + lowerIndex];
+  const second = points[startIndex + upperIndex];
   return {
     x: first.x + (second.x - first.x) * fraction,
     y: first.y + (second.y - first.y) * fraction,
@@ -450,14 +452,18 @@ export function TelemetryTrackSync({
 
   const usablePlaybackLaps = React.useMemo(
     () =>
-      playbackLaps.filter(
-        (lap) =>
+      playbackLaps.filter((lap) => {
+        const startIndex = Math.floor(finiteNumber(lap.start_index));
+        return (
           points.length >= 2 &&
-          lap.elapsed?.length === points.length &&
+          startIndex >= 0 &&
+          startIndex < points.length &&
+          lap.elapsed?.length === points.length - startIndex &&
           Number.isFinite(Number(lap.duration)) &&
           Number(lap.duration) > 0 &&
-          lap.elapsed.every((value) => Number.isFinite(Number(value))),
-      ),
+          lap.elapsed.every((value) => Number.isFinite(Number(value)))
+        );
+      }),
     [playbackLaps, points.length],
   );
   const totalDuration = React.useMemo(
