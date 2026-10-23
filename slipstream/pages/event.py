@@ -433,7 +433,14 @@ class EventState(rx.State):
         for lap in self.telemetry_laps:
             line = lines_by_key.get(lap["key"])
             elapsed = lap["elapsed"]
-            if line is None or len(elapsed) != point_count or lap["seconds"] <= 0:
+            start_index = int(lap["start_index"])
+            if (
+                line is None
+                or start_index < 0
+                or start_index >= point_count
+                or len(elapsed) != point_count - start_index
+                or lap["seconds"] <= 0
+            ):
                 continue
             playback_laps.append(
                 {
@@ -441,6 +448,7 @@ class EventState(rx.State):
                     "label": line["label"],
                     "color": line["color"],
                     "duration": float(lap["seconds"]),
+                    "start_index": start_index,
                     "elapsed": elapsed,
                 }
             )
