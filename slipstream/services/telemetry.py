@@ -60,6 +60,7 @@ class TelemetryLap(TypedDict):
     driver: str
     number: int
     seconds: float
+    start_index: int
     elapsed: list[float]
 
 
@@ -169,11 +170,13 @@ def _telemetry_rows(
         row: dict[str, float | int] = {"distance": round(float(distance), 2)}
         for lap in available:
             values = sampled[lap.key]
+            elapsed = values["elapsed"][index]
+            if not isfinite(float(elapsed)):
+                continue
             key = lap.key
             row[f"speed_{key}"] = round(float(values["speed"][index]), 1)
-            row[f"delta_{key}"] = round(
-                float(values["elapsed"][index] - baseline_elapsed[index]), 3
-            )
+            if isfinite(float(baseline_elapsed[index])):
+                row[f"delta_{key}"] = round(float(elapsed - baseline_elapsed[index]), 3)
             row[f"throttle_{key}"] = round(float(values["throttle"][index]), 1)
             row[f"brake_{key}"] = int(values["brake"][index])
             row[f"rpm_{key}"] = round(float(values["rpm"][index]))
@@ -185,6 +188,7 @@ def _telemetry_rows(
 def _serialize_telemetry_laps(
     available: list[_LapSamples],
     sampled: dict[str, dict[str, np.ndarray]],
+    start_indices: dict[str, int],
 ) -> list[TelemetryLap]:
     """Serialize the shared lap identity and elapsed-time chart data."""
     return [
@@ -193,8 +197,10 @@ def _serialize_telemetry_laps(
             "driver": lap.driver,
             "number": lap.number,
             "seconds": lap.seconds,
+            "start_index": start_indices[lap.key],
             "elapsed": [
-                round(float(value), 4) for value in sampled[lap.key]["elapsed"]
+                round(float(value), 4)
+                for value in sampled[lap.key]["elapsed"][start_indices[lap.key] :]
             ],
         }
         for lap in available
@@ -395,23 +401,55 @@ def _openf1_lap_samples(
     )
 
 
+def _aligned_start_distance(samples: _LapSamples, reference_length: float) -> float:
+    """Return a lap's recorded start position when its finish is aligned."""
+    return max(0.0, reference_length - float(samples.distance[-1]))
+
+
+def _distance_grid(
+    available: list[_LapSamples], reference_length: float
+) -> tuple[np.ndarray, dict[str, int]]:
+    """Build the shared grid with an exact sample at every lap start."""
+    starts = {
+        lap.key: _aligned_start_distance(lap, reference_length) for lap in available
+    }
+    grid = np.unique(
+        np.concatenate(
+            (
+                np.arange(0, reference_length, SAMPLE_SPACING_METRES),
+                np.array([reference_length, *starts.values()], dtype=float),
+            )
+        )
+    )
+    return grid, {
+        key: int(np.searchsorted(grid, start)) for key, start in starts.items()
+    }
+
+
 def _resample(
-    samples: _LapSamples, grid: np.ndarray, baseline_length: float
+    samples: _LapSamples, grid: np.ndarray, reference_length: float
 ) -> dict[str, np.ndarray]:
-    """Map one lap's channels to the baseline's start-to-finish distance."""
-    scaled_distance = samples.distance * baseline_length / samples.distance[-1]
+    """Map one lap's samples without stretching its recorded distance."""
+    start_distance = _aligned_start_distance(samples, reference_length)
+    aligned_distance = samples.distance + start_distance
     # At a stationary sample, retain the latest value at that distance.
     unique_distance, reverse_indices = np.unique(
-        scaled_distance[::-1], return_index=True
+        aligned_distance[::-1], return_index=True
     )
-    indices = len(scaled_distance) - 1 - reverse_indices
+    indices = len(aligned_distance) - 1 - reverse_indices
+    covered = (grid >= start_distance) & (grid <= reference_length)
+    covered_grid = grid[covered]
 
     def continuous(values: np.ndarray) -> np.ndarray:
-        return np.interp(grid, unique_distance, values[indices])
+        result = np.full(len(grid), np.nan, dtype=float)
+        result[covered] = np.interp(covered_grid, unique_distance, values[indices])
+        return result
 
     def discrete(values: np.ndarray) -> np.ndarray:
-        previous = np.searchsorted(unique_distance, grid, side="right") - 1
-        return values[indices[np.clip(previous, 0, len(indices) - 1)]]
+        result = np.full(len(grid), np.nan, dtype=float)
+        previous = np.searchsorted(unique_distance, covered_grid, side="right") - 1
+        result[covered] = values[indices[np.clip(previous, 0, len(indices) - 1)]]
+        return result
 
     return {
         "elapsed": continuous(samples.elapsed),
@@ -478,18 +516,28 @@ def _mini_sector_segments(
     boundary_indices = np.searchsorted(grid, boundaries, side="left")
     boundary_indices[0] = 0
     boundary_indices[-1] = len(grid) - 1
-    elapsed_at_boundaries = {
-        lap.key: np.interp(boundaries, grid, sampled[lap.key]["elapsed"])
-        for lap in laps
-    }
     segments: list[TelemetryTrackSegment] = []
     for index in range(MINI_SECTOR_COUNT):
+        candidates = [
+            lap
+            for lap in laps
+            if _aligned_start_distance(lap, float(grid[-1])) <= boundaries[index]
+        ]
+        if not candidates:
+            continue
+        elapsed_at_boundaries = {
+            lap.key: np.interp(
+                boundaries[index : index + 2],
+                grid,
+                sampled[lap.key]["elapsed"],
+            )
+            for lap in candidates
+        }
         # Python's min keeps the first item on exact ties, matching lap selection order.
         winner = min(
-            laps,
+            candidates,
             key=lambda lap: float(
-                elapsed_at_boundaries[lap.key][index + 1]
-                - elapsed_at_boundaries[lap.key][index]
+                elapsed_at_boundaries[lap.key][1] - elapsed_at_boundaries[lap.key][0]
             ),
         )
         segments.append(
@@ -670,22 +718,23 @@ def _get_fastf1_session_telemetry(
         return _empty_session_telemetry(unavailable)
 
     baseline = min(available, key=lambda lap: lap.seconds)
-    length = float(baseline.distance[-1])
-    grid = np.append(np.arange(0, length, SAMPLE_SPACING_METRES), length)
+    reference = max(available, key=lambda lap: float(lap.distance[-1]))
+    length = float(reference.distance[-1])
+    grid, start_indices = _distance_grid(available, length)
     sampled = {lap.key: _resample(lap, grid, length) for lap in available}
     (
         track_points,
         track_segments,
         track_corners,
         preserve_orientation,
-    ) = _track_geometry(session, baseline, grid, available, sampled, circuit_name)
+    ) = _track_geometry(session, reference, grid, available, sampled, circuit_name)
     rows = _telemetry_rows(grid, available, sampled, baseline)
 
     return {
         "rows": rows,
-        "laps": _serialize_telemetry_laps(available, sampled),
-        "corners": _corner_distances(session, baseline),
-        "sectors": _sector_distances(baseline),
+        "laps": _serialize_telemetry_laps(available, sampled, start_indices),
+        "corners": _corner_distances(session, reference),
+        "sectors": _sector_distances(reference),
         "track_points": track_points,
         "track_segments": track_segments,
         "track_corners": track_corners,
@@ -838,18 +887,19 @@ def _get_openf1_session_telemetry(
         return _empty_session_telemetry(unavailable)
 
     baseline = min(available, key=lambda lap: lap.seconds)
-    length = float(baseline.distance[-1])
-    grid = np.append(np.arange(0, length, SAMPLE_SPACING_METRES), length)
+    reference = max(available, key=lambda lap: float(lap.distance[-1]))
+    length = float(reference.distance[-1])
+    grid, start_indices = _distance_grid(available, length)
     sampled = {lap.key: _resample(lap, grid, length) for lap in available}
     locations: list[OpenF1LocationSample] = []
     circuit_info: CircuitInfo | None = None
-    if baseline.openf1_lap is not None:
+    if reference.openf1_lap is not None:
         try:
             session_key = get_openf1_session_key(season, round_number, session_code)
             locations = get_openf1_location_data(
                 session_key,
-                baseline.openf1_lap["driver_number"],
-                baseline.openf1_lap,
+                reference.openf1_lap["driver_number"],
+                reference.openf1_lap,
             )
         except LookupError, ValueError, KeyError, TypeError, RequestException:
             # The six charts remain useful if optional position samples fail.
@@ -867,15 +917,15 @@ def _get_openf1_session_telemetry(
         track_corners,
         preserve_orientation,
     ) = _openf1_track_geometry(
-        baseline, grid, available, sampled, locations, circuit_info, circuit_name
+        reference, grid, available, sampled, locations, circuit_info, circuit_name
     )
     rows = _telemetry_rows(grid, available, sampled, baseline)
 
     return {
         "rows": rows,
-        "laps": _serialize_telemetry_laps(available, sampled),
-        "corners": _openf1_corner_distances(baseline, locations, circuit_info),
-        "sectors": _openf1_sector_distances(baseline),
+        "laps": _serialize_telemetry_laps(available, sampled, start_indices),
+        "corners": _openf1_corner_distances(reference, locations, circuit_info),
+        "sectors": _openf1_sector_distances(reference),
         "track_points": track_points,
         "track_segments": track_segments,
         "track_corners": track_corners,
