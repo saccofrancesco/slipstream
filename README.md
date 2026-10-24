@@ -9,7 +9,7 @@
   </a>
 </p>
 
-<h4 align="center">A Formula 1 results dashboard for race weekends, championship standings, session classifications, lap times, and telemetry — built with <a href="https://reflex.dev">Reflex</a> and powered by <a href="https://docs.fastf1.dev">FastF1</a> and <a href="https://openf1.org/">OpenF1</a>.</h4>
+<h4 align="center">A Formula 1 results dashboard for race weekends, championship standings, session classifications, lap times, and telemetry — built with <a href="https://reflex.dev">Reflex</a> and powered by <a href="https://openf1.org/">OpenF1</a> and <a href="https://github.com/jolpica/jolpica-f1">Jolpica F1</a>.</h4>
 
 <p align="center"><a href="https://slipstream-lime-star.reflex.run"><strong>🌐 Try Slipstream live</strong></a></p>
 
@@ -72,11 +72,12 @@ reflex run
 Open **http://localhost:3000** once Reflex starts. On Windows, activate the virtual environment with `.venv\Scripts\activate` before installing dependencies.
 
 The featured current or upcoming race weekend uses OpenF1 meeting and session
-records for event details and scheduled start/end times. Completed sessions
-from 2023 onward use OpenF1's free historical API for lap times, tyre
-compounds, car telemetry, and track positions. OpenF1 makes a session available
-without authentication roughly 30 minutes after it ends. Older events retain
-the FastF1 and Ergast fallbacks, where less detailed data may be available.
+records for event details and scheduled start/end times. OpenF1's free
+historical API supplies published session classifications, lap times, tyre
+compounds, car telemetry, and track positions from 2023 onward. Jolpica F1's
+Ergast-compatible API supplies calendars, standings, and older race,
+qualifying, sprint, and race-lap data where available. Older events do not
+include practice timing or telemetry.
 
 ---
 
@@ -104,10 +105,8 @@ Slipstream uses the following libraries and data sources:
 
 * [Python](https://www.python.org/)
 * [Reflex](https://reflex.dev/)
-* [FastF1](https://docs.fastf1.dev/)
-* [Ergast API via FastF1](https://docs.fastf1.dev/ergast.html) for championship round mapping, archive calendars, and standings
-* [OpenF1](https://openf1.org/) for upcoming meeting schedules and free historical lap, tyre, telemetry, and position data from 2023 onward
-* [Formula 1 timing data via FastF1](https://docs.fastf1.dev/core.html) as a fallback where available
+* [OpenF1](https://openf1.org/) for race-weekend schedules and historical classifications, lap, tyre, telemetry, and position data from 2023 onward
+* [Jolpica F1](https://github.com/jolpica/jolpica-f1) for championship calendars, standings, and older race, qualifying, sprint, and race-lap data
 
 ---
 
