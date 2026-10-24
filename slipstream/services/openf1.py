@@ -210,6 +210,18 @@ def _request_rows(endpoint: str, params: dict[str, object]) -> list[dict[str, An
                 timeout=_REQUEST_TIMEOUT_SECONDS,
             )
         if response.status_code != 429 or attempt == 1:
+            if response.status_code == 404:
+                try:
+                    missing_payload = response.json()
+                except ValueError:
+                    missing_payload = None
+                if (
+                    isinstance(missing_payload, dict)
+                    and missing_payload.get("detail") == "No results found."
+                ):
+                    # OpenF1 uses this 404 response for a valid collection query
+                    # whose session data has not been published yet.
+                    return []
             response.raise_for_status()
             payload = response.json()
             if not isinstance(payload, list):
@@ -461,7 +473,7 @@ def get_openf1_session_drivers(session_key: int) -> tuple[OpenF1Driver, ...]:
     return _session_drivers(session_key)
 
 
-@_openf1_cached()
+@_openf1_cached(ttl_seconds=_OPENF1_SAMPLE_TTL_SECONDS)
 def _session_results(session_key: int) -> tuple[OpenF1SessionResult, ...]:
     """Load the classification published for one historical session."""
     results: list[OpenF1SessionResult] = []

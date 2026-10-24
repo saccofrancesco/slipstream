@@ -277,7 +277,6 @@ def _openf1_lap_samples(
             sector_boundaries.append(first_sector + second_sector)
 
     return _LapSamples(
-        lap=None,
         openf1_lap=lap,
         key=f"{driver}_{number}",
         driver=driver,
@@ -493,7 +492,7 @@ def _get_openf1_session_telemetry(
             )
             car_samples = get_openf1_car_data(session_key, lap["driver_number"], lap)
             available.append(_openf1_lap_samples(lap, car_samples, driver, number))
-        except LookupError, ValueError, KeyError, TypeError, IndexError:
+        except LookupError, ValueError:
             unavailable.append(label)
 
     if not available:
