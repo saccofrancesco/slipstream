@@ -5,7 +5,7 @@ bidict==0.24.1
 boolean.py==5.0
 CacheControl==0.14.4
 cattrs==26.2.1
-certifi==2026.10.19
+certifi==2026.10.23
 cffi==2.1.1
 charset-normalizer==3.5.2
 click==8.5.0
@@ -42,7 +42,7 @@ pip_audit==2.10.1
 platformdirs==4.13.5
 plotly==7.1.0
 py-serializable==2.1.0
-pycparser==3.11
+pycparser==3.12
 pydantic==2.14.1
 pydantic_core==2.50.1
 Pygments==2.21.0
@@ -81,7 +81,7 @@ signalrcore==1.0.2
 simple-websocket==1.1.0
 six==1.17.0
 sortedcontainers==2.4.0
-starlette==1.9.0
+starlette==1.10.0
 timple==0.1.8
 tomli==2.5.0
 tomli_w==1.2.0
