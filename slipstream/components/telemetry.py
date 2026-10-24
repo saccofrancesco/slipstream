@@ -1,4 +1,4 @@
-"""Six synchronized distance charts for selected FastF1 laps."""
+"""Six synchronized distance charts for selected historical laps."""
 
 from math import ceil, floor
 from typing import TypedDict
