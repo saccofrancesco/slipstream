@@ -28,7 +28,7 @@ def constructors() -> rx.Component:
         ConstructorsState.error,
         active_section="teams",
         eyebrow="Team championship",
-        title="Teams’ Championship",  # noqa: RUF001 - typographic apostrophe.
+        title="Teams’ Championship",
         description="Latest team championship standings.",
         is_driver=False,
     )

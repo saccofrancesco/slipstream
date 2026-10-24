@@ -27,7 +27,7 @@ def drivers() -> rx.Component:
         DriversState.error,
         active_section="drivers",
         eyebrow="Driver championship",
-        title="Drivers’ Championship",  # noqa: RUF001 - typographic apostrophe.
+        title="Drivers’ Championship",
         description="Latest driver championship standings.",
         is_driver=True,
     )

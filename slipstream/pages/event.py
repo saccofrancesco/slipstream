@@ -823,7 +823,7 @@ class EventState(rx.State):
         """Replace the visible classification with a selected session's rows.
 
         Args:
-            session_code: FastF1 identifier selected from the event schedule.
+            session_code: Identifier selected from the event schedule.
 
         Yields:
             A state update that clears old rows and displays loading feedback.

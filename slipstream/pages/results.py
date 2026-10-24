@@ -164,7 +164,7 @@ class ResultsState(rx.State):
         self.archive_season = str(current_date.year)
         yield
         try:
-            # The FastF1 client is synchronous; keep its request off the
+            # The provider clients are synchronous; keep their requests off the
             # Reflex event loop while retaining an async page-load event.
             weekend: RaceWeekend | None = await asyncio.to_thread(
                 get_cached_race_weekend, current_date
