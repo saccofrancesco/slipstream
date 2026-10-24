@@ -28,10 +28,7 @@ jobs:
       - name: Install dependency auditor
         run: python -m pip install pip-audit==2.10.1
       - name: Audit pinned dependencies
-        # FastF1 requires SignalR Core, which pins msgpack 1.1.2. The app does
-        # not use SignalR's MessagePack transport; track the upstream fix in
-        # AUDIT.md and remove this exception once SignalR Core updates its pin.
-        run: pip-audit -r requirements.txt --ignore-vuln PYSEC-2026-3625
+        run: pip-audit -r requirements.txt
 
   deploy:
     needs: verify
