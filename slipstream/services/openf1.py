@@ -140,6 +140,7 @@ class OpenF1Meeting(TypedDict):
     country_name: str
     location: str
     circuit_short_name: str
+    circuit_info_url: str
     starts_at: datetime
     ends_at: datetime | None
     track_offset_minutes: int | None
@@ -308,6 +309,7 @@ def _race_meetings(season: int) -> tuple[OpenF1Meeting, ...]:
                 "country_name": str(row.get("country_name") or ""),
                 "location": str(row.get("location") or ""),
                 "circuit_short_name": str(row.get("circuit_short_name") or ""),
+                "circuit_info_url": str(row.get("circuit_info_url") or ""),
                 "starts_at": starts_at,
                 "ends_at": _timestamp(row.get("date_end")),
                 "track_offset_minutes": _utc_offset_minutes(
@@ -373,6 +375,27 @@ def _resolve_meeting(season: int, round_number: int) -> OpenF1Meeting:
         if abs((race_date - nearest["starts_at"].date()).days) <= 7:
             return nearest
     raise LookupError("The requested OpenF1 meeting could not be found")
+
+
+@_openf1_cached()
+def get_openf1_circuit_rotation(season: int, round_number: int) -> float | None:
+    """Return the circuit's official clockwise display rotation, when published."""
+    if season < OPENF1_FIRST_HISTORICAL_SEASON:
+        return None
+    circuit_info_url = _resolve_meeting(season, round_number)["circuit_info_url"]
+    if not circuit_info_url:
+        return None
+
+    with _HTTP_LOCK:
+        response = _HTTP_SESSION.get(
+            circuit_info_url,
+            timeout=_REQUEST_TIMEOUT_SECONDS,
+        )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise TypeError("OpenF1 circuit metadata returned an unexpected payload")
+    return _number(payload.get("rotation"))
 
 
 @_openf1_cached()

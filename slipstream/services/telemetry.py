@@ -17,6 +17,7 @@ from .openf1 import (
     OpenF1LocationSample,
     find_openf1_lap,
     get_openf1_car_data,
+    get_openf1_circuit_rotation,
     get_openf1_location_data,
     get_openf1_session_key,
 )
@@ -362,6 +363,17 @@ def _rotate_coordinates(
     return x * cos(angle) + y * sin(angle), -x * sin(angle) + y * cos(angle)
 
 
+def _track_rotation(
+    circuit_name: str, circuit_rotation: float | None
+) -> tuple[float, bool]:
+    """Add Slipstream's circuit adjustment to the provider's base rotation."""
+    adjustment = TRACK_ROTATION_ADJUSTMENTS.get(circuit_name, 0.0)
+    preserve_orientation = circuit_name in TRACK_ROTATION_ADJUSTMENTS
+    if circuit_rotation is not None and isfinite(circuit_rotation):
+        return circuit_rotation + adjustment, True
+    return adjustment, preserve_orientation
+
+
 def _mini_sector_segments(
     grid: np.ndarray,
     laps: list[_LapSamples],
@@ -413,6 +425,7 @@ def _openf1_track_geometry(
     sampled: dict[str, dict[str, np.ndarray]],
     locations: list[OpenF1LocationSample],
     circuit_name: str,
+    circuit_rotation: float | None,
 ) -> tuple[
     list[TelemetryTrackPoint],
     list[TelemetryTrackSegment],
@@ -444,8 +457,7 @@ def _openf1_track_geometry(
     grid_session_time = np.interp(grid, baseline.distance, baseline.session_time)
     trace_x = np.interp(grid_session_time, position_times, position_x)
     trace_y = np.interp(grid_session_time, position_times, position_y)
-    rotation = TRACK_ROTATION_ADJUSTMENTS.get(circuit_name, 0.0)
-    preserve_orientation = circuit_name in TRACK_ROTATION_ADJUSTMENTS
+    rotation, preserve_orientation = _track_rotation(circuit_name, circuit_rotation)
     trace_x, trace_y = _rotate_coordinates(trace_x, trace_y, rotation)
 
     return (
@@ -504,6 +516,7 @@ def _get_openf1_session_telemetry(
     grid, start_indices = _distance_grid(available, length)
     sampled = {lap.key: _resample(lap, grid, length) for lap in available}
     locations: list[OpenF1LocationSample] = []
+    circuit_rotation: float | None = None
     if reference.openf1_lap is not None:
         try:
             session_key = get_openf1_session_key(season, round_number, session_code)
@@ -515,13 +528,24 @@ def _get_openf1_session_telemetry(
         except LookupError, ValueError, KeyError, TypeError, RequestException:
             # Car channels remain useful when optional position samples fail.
             locations = []
+        try:
+            circuit_rotation = get_openf1_circuit_rotation(season, round_number)
+        except LookupError, ValueError, KeyError, TypeError, RequestException:
+            # Keep the custom adjustment when optional circuit metadata fails.
+            circuit_rotation = None
     (
         track_points,
         track_segments,
         track_corners,
         preserve_orientation,
     ) = _openf1_track_geometry(
-        reference, grid, available, sampled, locations, circuit_name
+        reference,
+        grid,
+        available,
+        sampled,
+        locations,
+        circuit_name,
+        circuit_rotation,
     )
     rows = _telemetry_rows(grid, available, sampled, baseline)
 
