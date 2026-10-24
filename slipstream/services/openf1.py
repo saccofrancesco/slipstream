@@ -15,9 +15,9 @@ import requests
 
 from .cache import TTLCache
 from .catalog import OPENF1_SESSION_NAMES
+from .jolpica import get_jolpica_rows
 
 OPENF1_BASE_URL: str = "https://api.openf1.org/v1"
-JOLPICA_BASE_URL: str = "https://api.jolpi.ca/ergast/f1"
 OPENF1_FIRST_HISTORICAL_SEASON: int = 2023
 _REQUEST_TIMEOUT_SECONDS: int = 30
 _RATE_LIMIT_GRACE_SECONDS: float = 0.05
@@ -82,9 +82,24 @@ class OpenF1Driver(TypedDict):
 
     driver_number: int
     code: str
+    first_name: str
+    last_name: str
     full_name: str
     team_name: str
     team_color: str
+
+
+class OpenF1SessionResult(TypedDict):
+    """One driver's published position and timing after a session."""
+
+    driver_number: int
+    position: int
+    duration: object
+    gap_to_leader: object
+    number_of_laps: int
+    dnf: bool
+    dns: bool
+    dsq: bool
 
 
 class OpenF1Lap(TypedDict):
@@ -121,7 +136,6 @@ class OpenF1Meeting(TypedDict):
     """OpenF1 event identity and schedule fields for one Grand Prix weekend."""
 
     meeting_key: int
-    circuit_key: int
     name: str
     country_name: str
     location: str
@@ -268,19 +282,16 @@ def _race_meetings(season: int) -> tuple[OpenF1Meeting, ...]:
     for row in rows:
         name = str(row.get("meeting_name") or "")
         meeting_key = _integer(row.get("meeting_key"))
-        circuit_key = _integer(row.get("circuit_key"))
         starts_at = _timestamp(row.get("date_start"))
         if (
             "grand prix" not in name.lower()
             or meeting_key is None
-            or circuit_key is None
             or starts_at is None
         ):
             continue
         meetings.append(
             {
                 "meeting_key": meeting_key,
-                "circuit_key": circuit_key,
                 "name": name,
                 "country_name": str(row.get("country_name") or ""),
                 "location": str(row.get("location") or ""),
@@ -311,15 +322,10 @@ def _normalized_event_name(value: str) -> str:
 @_openf1_cached()
 def _jolpica_event_identity(season: int, round_number: int) -> tuple[str, date]:
     """Load the official race name/date used by Slipstream's archive route."""
-    with _HTTP_LOCK:
-        response = _HTTP_SESSION.get(
-            f"{JOLPICA_BASE_URL}/{season}/{round_number}.json",
-            timeout=_REQUEST_TIMEOUT_SECONDS,
-        )
-    response.raise_for_status()
-    payload = response.json()
+    races = get_jolpica_rows(
+        f"{season}/{round_number}.json", "RaceTable", "Races"
+    )
     try:
-        races = payload["MRData"]["RaceTable"]["Races"]
         race = races[0]
         name = str(race["raceName"])
         race_date = date.fromisoformat(str(race["date"]))
@@ -389,6 +395,18 @@ def get_openf1_meeting_sessions(
 
 
 @_openf1_cached()
+def get_openf1_event_sessions(
+    season: int,
+    round_number: int,
+) -> tuple[OpenF1MeetingSession, ...]:
+    """Resolve a championship event and return its OpenF1 session schedule."""
+    if season < OPENF1_FIRST_HISTORICAL_SEASON:
+        raise LookupError("OpenF1 historical data starts with the 2023 season")
+    meeting_key = _resolve_meeting(season, round_number)["meeting_key"]
+    return _meeting_sessions(meeting_key)
+
+
+@_openf1_cached()
 def get_openf1_session_key(season: int, round_number: int, session_code: str) -> int:
     """Resolve Slipstream's season/round/session coordinates to OpenF1."""
     if season < OPENF1_FIRST_HISTORICAL_SEASON:
@@ -406,11 +424,6 @@ def get_openf1_session_key(season: int, round_number: int, session_code: str) ->
             if session["name"] == expected_name:
                 return session["session_key"]
     raise LookupError("The requested OpenF1 session could not be found")
-
-
-def get_openf1_circuit_key(season: int, round_number: int) -> int:
-    """Return the F1 timing circuit key shared with FastF1's map metadata."""
-    return _resolve_meeting(season, round_number)["circuit_key"]
 
 
 @_openf1_cached()
@@ -432,6 +445,8 @@ def _session_drivers(session_key: int) -> tuple[OpenF1Driver, ...]:
             {
                 "driver_number": number,
                 "code": code,
+                "first_name": str(row.get("first_name") or "").strip(),
+                "last_name": str(row.get("last_name") or "").strip(),
                 "full_name": str(row.get("full_name") or code).strip(),
                 "team_name": str(row.get("team_name") or "").strip(),
                 "team_color": f"#{color}",
@@ -439,6 +454,46 @@ def _session_drivers(session_key: int) -> tuple[OpenF1Driver, ...]:
         )
         seen_numbers.add(number)
     return tuple(drivers)
+
+
+def get_openf1_session_drivers(session_key: int) -> tuple[OpenF1Driver, ...]:
+    """Return cached driver names and team colors for one session."""
+    return _session_drivers(session_key)
+
+
+@_openf1_cached()
+def _session_results(session_key: int) -> tuple[OpenF1SessionResult, ...]:
+    """Load the classification published for one historical session."""
+    results: list[OpenF1SessionResult] = []
+    for row in _request_rows("session_result", {"session_key": session_key}):
+        driver_number = _integer(row.get("driver_number"))
+        position = _integer(row.get("position"))
+        number_of_laps = _integer(row.get("number_of_laps"))
+        if driver_number is None or position is None:
+            continue
+        results.append(
+            {
+                "driver_number": driver_number,
+                "position": position,
+                "duration": row.get("duration"),
+                "gap_to_leader": row.get("gap_to_leader"),
+                "number_of_laps": number_of_laps or 0,
+                "dnf": row.get("dnf") is True,
+                "dns": row.get("dns") is True,
+                "dsq": row.get("dsq") is True,
+            }
+        )
+    return tuple(results)
+
+
+def get_openf1_session_results(
+    season: int,
+    round_number: int,
+    session_code: str,
+) -> tuple[OpenF1SessionResult, ...]:
+    """Return cached classification rows for one supported session."""
+    session_key = get_openf1_session_key(season, round_number, session_code)
+    return _session_results(session_key)
 
 
 @_openf1_cached()

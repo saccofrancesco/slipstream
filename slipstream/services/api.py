@@ -4,41 +4,43 @@ import logging
 import re
 import unicodedata
 from datetime import UTC, date, datetime, time, timedelta, timezone
-from functools import lru_cache
 from math import ceil, isfinite
 from statistics import median
 from typing import Any, TypedDict
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-# FastF1 provides the Ergast client used to retrieve calendars and standings.
-import fastf1
-import fastf1.plotting
-import pandas as pd
-from fastf1.core import Session
-from fastf1.ergast import Ergast
-from fastf1.exceptions import DataNotLoadedError
-
 from .cache import TTLCache
 from .catalog import COMPOUND_COLORS, EVENT_SESSION_FIELDS, SUPPORTED_SESSION_CODES
 from .flags import flag_for_circuit_country
+from .jolpica import get_jolpica_rows
 from .openf1 import (
     OPENF1_FIRST_HISTORICAL_SEASON,
+    OpenF1Driver,
     OpenF1Meeting,
     OpenF1MeetingSession,
+    OpenF1SessionResult,
     OpenF1SessionData,
+    get_openf1_event_sessions,
     get_openf1_meeting_sessions,
     get_openf1_meetings,
     get_openf1_session_data,
+    get_openf1_session_drivers,
+    get_openf1_session_key,
+    get_openf1_session_results,
 )
 
-# Keep FastF1's unbounded parsed cache disabled. The application-level cache in
-# cached.py applies explicit freshness windows to normalized provider results.
-fastf1.Cache.set_disabled()
-
-# Reuse one Ergast client for schedule and standings requests.
-ergast: Ergast = Ergast()
 logger: logging.Logger = logging.getLogger(__name__)
 _RACE_SCHEDULE_CACHE: TTLCache = TTLCache(maxsize=8)
+_OPENF1_SESSION_OPTIONS: dict[str, tuple[str, str]] = {
+    "Practice 1": ("FP1", "Practice 1"),
+    "Practice 2": ("FP2", "Practice 2"),
+    "Practice 3": ("FP3", "Practice 3"),
+    "Sprint Qualifying": ("SQ", "Sprint Qualifying"),
+    "Sprint Shootout": ("SS", "Sprint Qualifying"),
+    "Sprint": ("S", "Sprint"),
+    "Qualifying": ("Q", "Qualifying"),
+    "Race": ("R", "Race"),
+}
 
 
 class ScheduledSession(TypedDict):
@@ -156,7 +158,9 @@ def _race_schedule(season: int) -> list[dict[str, Any]]:
     return _RACE_SCHEDULE_CACHE.get_or_load(
         ("race_schedule", season),
         ttl_seconds,
-        lambda: ergast.get_race_schedule(season=season, result_type="raw", limit=1000),
+        lambda: get_jolpica_rows(
+            f"{season}.json", "RaceTable", "Races"
+        ),
     )
 
 
@@ -169,9 +173,11 @@ def get_available_seasons(start_year: int = 1950) -> list[str]:
     Returns:
         Season years formatted as strings for championship requests.
     """
-    # The raw Ergast response is a list of records; keep that boundary typed
-    # before extracting the small string-only shape used by page state.
-    response: list[dict[str, Any]] = ergast.get_seasons(result_type="raw", limit=1000)
+    # Keep the raw response typed at the provider boundary before extracting
+    # the smaller string-only shape used by page state.
+    response: list[dict[str, Any]] = get_jolpica_rows(
+        "seasons.json", "SeasonTable", "Seasons"
+    )
     if not response:
         return []
 
@@ -356,6 +362,48 @@ def get_event_details(
         )
     )
     session_dates.append(race_date)
+
+    if parsed_season >= OPENF1_FIRST_HISTORICAL_SEASON:
+        try:
+            openf1_sessions = get_openf1_event_sessions(
+                parsed_season, parsed_round
+            )
+        except Exception:
+            logger.warning(
+                "OpenF1 session schedule is unavailable for the archive event",
+                exc_info=True,
+                extra={"season": parsed_season, "round": parsed_round},
+            )
+        else:
+            scheduled_codes = {item[4]["code"] for item in scheduled}
+            for index, session in enumerate(openf1_sessions):
+                option = _OPENF1_SESSION_OPTIONS.get(session["name"])
+                if option is None or session["is_cancelled"]:
+                    continue
+                code, _ = option
+                if code in scheduled_codes or (
+                    code in {"SQ", "SS"} and sprint_qualifying_added
+                ):
+                    continue
+                starts_at = session["starts_at"]
+                session_date = starts_at.date() if starts_at is not None else race_date
+                if session_date > race_date:
+                    continue
+                session_time = starts_at.strftime("%H:%M") if starts_at else "TBD"
+                scheduled.append(
+                    (
+                        session_date,
+                        session_time == "TBD",
+                        session_time,
+                        len(EVENT_SESSION_FIELDS) + index,
+                        {"code": code, "name": option[1]},
+                    )
+                )
+                scheduled_codes.add(code)
+                if code in {"SQ", "SS"}:
+                    sprint_qualifying_added = True
+                session_dates.append(session_date)
+
     session_options: list[SessionOption] = [
         option for _, _, _, _, option in sorted(scheduled, key=lambda item: item[:4])
     ]
@@ -370,10 +418,170 @@ def get_event_details(
         "country": country,
         "country_flag": flag_for_circuit_country(country),
         "date_range": (
-            f"{start_date.strftime('%d %b')} – {race_date.strftime('%d %b %Y')}"  # noqa: RUF001 - rendered date-range punctuation.
+            f"{start_date.strftime('%d %b')} – {race_date.strftime('%d %b %Y')}"
         ),
         "sessions": session_options,
     }
+
+
+def _normalize_jolpica_result(row: dict[str, Any]) -> dict[str, Any]:
+    """Convert one compatible API result row to the shared classification shape."""
+    driver: dict[str, Any] = row.get("Driver") or {}
+    constructor: dict[str, Any] = row.get("Constructor") or {}
+    race_time: object = row.get("Time")
+    if isinstance(race_time, dict):
+        race_time = race_time.get("time")
+    return {
+        "Position": row.get("position"),
+        "ClassifiedPosition": row.get("positionText"),
+        "Abbreviation": driver.get("code"),
+        "DriverNumber": driver.get("permanentNumber"),
+        "DriverId": driver.get("driverId"),
+        "FirstName": driver.get("givenName"),
+        "LastName": driver.get("familyName"),
+        "FullName": " ".join(
+            value
+            for value in (driver.get("givenName"), driver.get("familyName"))
+            if value
+        ),
+        "TeamName": constructor.get("name"),
+        "TeamId": constructor.get("constructorId"),
+        "TeamColor": constructor.get("color"),
+        "Time": race_time,
+        "Laps": row.get("laps"),
+        "Status": row.get("status"),
+        "Q1": row.get("Q1"),
+        "Q2": row.get("Q2"),
+        "Q3": row.get("Q3"),
+    }
+
+
+def _jolpica_session_rows(
+    season: int,
+    round_number: int,
+    session_code: str,
+) -> list[dict[str, Any]]:
+    """Return supported legacy classifications from Jolpica's API."""
+    if session_code == "R":
+        endpoint, result_key = "results", "Results"
+    elif session_code == "Q":
+        endpoint, result_key = "qualifying", "QualifyingResults"
+    elif session_code in {"S", "SQ"} and season >= 2021:
+        # The older sprint format used a race-like Saturday classification.
+        if session_code == "SQ" and season >= OPENF1_FIRST_HISTORICAL_SEASON:
+            return []
+        endpoint, result_key = "sprint", "SprintResults"
+    else:
+        return []
+
+    rows = get_jolpica_rows(
+        f"{season}/{round_number}/{endpoint}.json",
+        "RaceTable",
+        "Races",
+    )
+    if not rows:
+        return []
+    result_rows = rows[0].get(result_key)
+    if not isinstance(result_rows, list):
+        return []
+    return [
+        _normalize_jolpica_result(row)
+        for row in result_rows
+        if isinstance(row, dict)
+    ]
+
+
+def _openf1_classification_rows(
+    season: int,
+    round_number: int,
+    session_code: str,
+) -> tuple[list[dict[str, Any]], dict[str, object]]:
+    """Join published OpenF1 results with driver and team metadata."""
+    session_key = get_openf1_session_key(season, round_number, session_code)
+    drivers: dict[int, OpenF1Driver] = {
+        driver["driver_number"]: driver
+        for driver in get_openf1_session_drivers(session_key)
+    }
+    results: tuple[OpenF1SessionResult, ...] = get_openf1_session_results(
+        season, round_number, session_code
+    )
+    rows: list[dict[str, Any]] = []
+    fastest_laps: dict[str, object] = {}
+    practice_session = session_code in {"FP1", "FP2", "FP3"}
+    for result in results:
+        driver = drivers.get(result["driver_number"])
+        if driver is None:
+            continue
+        duration = result["duration"]
+        duration_parts = duration if isinstance(duration, list) else [duration]
+        gap = result["gap_to_leader"]
+        gap_parts = gap if isinstance(gap, list) else [gap]
+        best_lap = duration_parts[0] if duration_parts else None
+        if practice_session:
+            fastest_laps[driver["code"]] = best_lap
+
+        status = (
+            "Did not start"
+            if result["dns"]
+            else "Disqualified"
+            if result["dsq"]
+            else "Retired"
+            if result["dnf"]
+            else "Finished"
+        )
+        row_time = best_lap
+        if session_code in {"Q", "SQ", "SS"}:
+            row_time = gap_parts[0] if gap_parts else None
+        elif not practice_session and result["position"] != 1:
+            row_time = gap_parts[0] if gap_parts else best_lap
+            if isinstance(row_time, str):
+                status = row_time
+
+        rows.append(
+            {
+                "Position": result["position"],
+                "ClassifiedPosition": (
+                    "D" if result["dsq"] else "N" if result["dns"] else result["position"]
+                ),
+                "Abbreviation": driver["code"],
+                "DriverNumber": str(driver["driver_number"]),
+                "FirstName": driver["first_name"],
+                "LastName": driver["last_name"],
+                "FullName": driver["full_name"],
+                "TeamName": driver["team_name"],
+                "TeamId": driver["team_name"],
+                "TeamColor": driver["team_color"],
+                "Time": row_time,
+                "Laps": result["number_of_laps"],
+                "Status": status,
+                "Q1": duration_parts[0] if len(duration_parts) > 0 else None,
+                "Q2": duration_parts[1] if len(duration_parts) > 1 else None,
+                "Q3": duration_parts[2] if len(duration_parts) > 2 else None,
+            }
+        )
+    return rows, fastest_laps
+
+
+def _classification_rows(
+    season: int,
+    round_number: int,
+    session_code: str,
+) -> tuple[list[dict[str, Any]], dict[str, object]]:
+    """Prefer OpenF1's session feed, then use published archive results."""
+    if season >= OPENF1_FIRST_HISTORICAL_SEASON:
+        try:
+            rows, fastest_laps = _openf1_classification_rows(
+                season, round_number, session_code
+            )
+            if rows:
+                return rows, fastest_laps
+        except Exception:
+            logger.warning(
+                "OpenF1 classification is unavailable; checking the race archive",
+                exc_info=True,
+                extra={"season": season, "round": round_number, "session": session_code},
+            )
+    return _jolpica_session_rows(season, round_number, session_code), {}
 
 
 def get_session_classification(
@@ -383,22 +591,20 @@ def get_session_classification(
 ) -> list[DriverClassification]:
     """Load and normalize the selected session's driver classification.
 
-    Practice sessions are ordered by each driver's fastest valid lap. Other
-    sessions retain FastF1's classified position order. Timings are normalized
-    against the first classified driver where comparable data exists.
+    Practice sessions use each driver's fastest published lap. Other sessions
+    retain the provider's classified position order and show comparable timing.
 
     Args:
         season: Championship season containing the event.
         round_number: Event round in that season.
-        session_code: FastF1 session identifier, such as ``"FP1"`` or ``"R"``.
+        session_code: Session identifier from the published weekend schedule.
 
     Returns:
-        Driver classification rows ordered for display. An empty list means
-        the session loaded but did not publish result rows.
+        Driver classification rows ordered for display, or an empty list when
+        the available data source has not published that session.
 
     Raises:
         ValueError: If a route value or session identifier is invalid.
-        Exception: Propagates FastF1 loading errors for the page to report.
     """
     coordinates: tuple[int, int] | None = parse_event_coordinates(season, round_number)
     if coordinates is None:
@@ -408,36 +614,11 @@ def get_session_classification(
         raise ValueError("The requested session is not supported.")
 
     practice_session: bool = session_code in {"FP1", "FP2", "FP3"}
-    # FastF1 needs lap data for practice classification. Other sessions only
-    # need their result table, so skip the larger lap and telemetry payloads.
-    session: Session = fastf1.get_session(parsed_season, parsed_round, session_code)
-    session.load(
-        laps=practice_session,
-        telemetry=False,
-        weather=False,
-        messages=False,
+    result_rows, fastest_laps = _classification_rows(
+        parsed_season, parsed_round, session_code
     )
-    result_rows: list[dict[str, Any]] = session.results.to_dict(orient="records")
     if not result_rows:
         return []
-
-    fastest_laps: dict[str, Any] = {}
-    if practice_session:
-        lap_results = session.laps
-        if "Deleted" in lap_results.columns:
-            deleted_laps = lap_results["Deleted"].map(
-                lambda value: not _is_missing(value) and bool(value)
-            )
-            lap_results = lap_results[~deleted_laps]
-        if not lap_results.empty:
-            for lap in lap_results[["Driver", "LapTime"]].to_dict(orient="records"):
-                driver_code = format_value(lap.get("Driver"))
-                lap_time = lap.get("LapTime")
-                if not driver_code or _is_missing(lap_time):
-                    continue
-                current_best = fastest_laps.get(driver_code)
-                if current_best is None or lap_time < current_best:
-                    fastest_laps[driver_code] = lap_time
 
     def fastest_lap_sort_key(row: dict[str, Any]) -> tuple[bool, float, str]:
         """Place timed practice results first, fastest lap before slower laps."""
@@ -452,7 +633,7 @@ def get_session_classification(
     def classified_sort_key(
         row_and_index: tuple[int, dict[str, Any]],
     ) -> tuple[bool, float, int]:
-        """Keep the published numeric result order, with unclassified rows last."""
+        """Keep published numeric result order, with unclassified rows last."""
         index, row = row_and_index
         position = _position_number(
             _first_present(row.get("Position"), row.get("ClassifiedPosition"))
@@ -466,8 +647,6 @@ def get_session_classification(
             row for _, row in sorted(enumerate(result_rows), key=classified_sort_key)
         ]
 
-    # Before 2023, Sprint Qualifying was a race-like session. Its result rows
-    # contain total race times instead of Q1/Q2/Q3 lap times.
     qualifying_session: bool = session_code in {"Q", "SS"} or (
         session_code == "SQ"
         and any(
@@ -494,12 +673,9 @@ def get_session_classification(
     for index, row in enumerate(ordered_rows, start=1):
         driver_code = _classification_driver_code(row)
         team = format_value(row.get("TeamName"))
-        team_id = format_value(row.get("TeamId"))
         team_color = get_team_color(
-            [{"constructorId": team_id, "name": team}],
+            [{"name": team}],
             row.get("TeamColor"),
-            season=parsed_season,
-            round_number=parsed_round,
         )
         given_name = format_value(row.get("FirstName"))
         family_name = format_value(row.get("LastName"))
@@ -548,29 +724,31 @@ def get_session_classification(
 def has_session_results(
     season: int | str, round_number: int | str, session_code: str
 ) -> bool:
-    """Report whether FastF1 has published driver result rows for a session.
-
-    Args:
-        season: Championship season containing the event.
-        round_number: Event round in that season.
-        session_code: FastF1 session identifier from the weekend schedule.
-
-    Returns:
-        Whether at least one driver result row is available.
-    """
+    """Report whether either available data source published session rows."""
     coordinates: tuple[int, int] | None = parse_event_coordinates(season, round_number)
     if coordinates is None or session_code not in SUPPORTED_SESSION_CODES:
         return False
     parsed_season, parsed_round = coordinates
 
-    session: Session = fastf1.get_session(parsed_season, parsed_round, session_code)
-    session.load(
-        laps=False,
-        telemetry=False,
-        weather=False,
-        messages=False,
-    )
-    return not session.results.empty
+    if parsed_season >= OPENF1_FIRST_HISTORICAL_SEASON:
+        try:
+            if get_openf1_session_results(parsed_season, parsed_round, session_code):
+                return True
+        except Exception:
+            logger.warning(
+                "OpenF1 result availability is unavailable; checking the race archive",
+                exc_info=True,
+                extra={"season": parsed_season, "round": parsed_round, "session": session_code},
+            )
+    try:
+        return bool(_jolpica_session_rows(parsed_season, parsed_round, session_code))
+    except Exception:
+        logger.warning(
+            "Could not check published archive results",
+            exc_info=True,
+            extra={"season": parsed_season, "round": parsed_round, "session": session_code},
+        )
+        return False
 
 
 def _quick_lap_threshold(lap_times: list[float]) -> float | None:
@@ -664,14 +842,15 @@ def get_session_laps(
 ) -> SessionLaps:
     """Load timed laps and team metadata for an archive session.
 
-    Outliers include laps flagged inaccurate or deleted by FastF1, pit laps,
-    and laps slower than 107% of each driver's quickest clean-lap pace. They
-    remain available when the chart's outlier switch is enabled.
+    OpenF1 supplies historical lap and tyre data from 2023 onward. The race
+    archive provides older race lap times without compounds or pit-lap flags.
+    Outliers include pit-out laps and laps slower than 107% of each driver's
+    quickest clean-lap pace.
 
     Args:
         season: Championship season containing the event.
         round_number: Event round in that season.
-        session_code: FastF1 session identifier.
+        session_code: Session identifier from the published weekend schedule.
 
     Returns:
         Selectable drivers and timed laps, including outlier flags.
@@ -695,10 +874,8 @@ def get_session_laps(
             if openf1_laps["laps"]:
                 return openf1_laps
         except Exception:
-            # Keep cached/local FastF1 data and the Ergast race feed as
-            # resilience paths when OpenF1 is temporarily unavailable.
             logger.warning(
-                "OpenF1 lap data is unavailable; trying archive fallbacks",
+                "OpenF1 lap data is unavailable; checking the race archive",
                 exc_info=True,
                 extra={
                     "season": parsed_season,
@@ -707,47 +884,11 @@ def get_session_laps(
                 },
             )
 
-    session: Session = fastf1.get_session(parsed_season, parsed_round, session_code)
-    session.load(
-        laps=True,
-        telemetry=False,
-        weather=False,
-        messages=False,
-    )
-    result_rows = session.results.to_dict(orient="records")
-    try:
-        fastf1_laps = session.laps
-    except DataNotLoadedError:
-        if session_code != "R":
-            raise
-        fastf1_laps = None
+    if session_code != "R":
+        return {"drivers": [], "laps": []}
 
-    if fastf1_laps is None or fastf1_laps.empty:
-        if session_code != "R":
-            return {"drivers": [], "laps": []}
-        raw_laps = _get_ergast_race_laps(
-            parsed_season,
-            parsed_round,
-            result_rows,
-        )
-        if not raw_laps:
-            return {"drivers": [], "laps": []}
-        logger.warning(
-            "FastF1 race timing data is unavailable; using Ergast lap times",
-            extra={
-                "season": parsed_season,
-                "round": parsed_round,
-                "lap_count": len(raw_laps),
-            },
-        )
-        compound_colors = {"UNKNOWN": "#969BA5"}
-    else:
-        raw_laps = fastf1_laps.to_dict(orient="records")
-        try:
-            compound_colors = fastf1.plotting.get_compound_mapping(session)
-        except Exception:  # noqa: BLE001 - compounds are optional metadata.
-            # Some older or incomplete timing feeds do not identify the event year.
-            compound_colors = COMPOUND_COLORS
+    result_rows = _jolpica_session_rows(parsed_season, parsed_round, "R")
+    raw_laps = _get_jolpica_race_laps(parsed_season, parsed_round, result_rows)
     if not raw_laps:
         return {"drivers": [], "laps": []}
 
@@ -758,7 +899,6 @@ def get_session_laps(
         if not code or code in known_codes:
             continue
         team = format_value(row.get("TeamName"))
-        team_id = format_value(row.get("TeamId"))
         full_name = format_value(row.get("FullName")) or code
         drivers.append(
             {
@@ -766,10 +906,8 @@ def get_session_laps(
                 "name": full_name,
                 "team": team,
                 "team_color": get_team_color(
-                    [{"constructorId": team_id, "name": team}],
+                    [{"name": team}],
                     row.get("TeamColor"),
-                    season=parsed_season,
-                    round_number=parsed_round,
                 ),
             }
         )
@@ -791,8 +929,6 @@ def get_session_laps(
                     "team": team,
                     "team_color": get_team_color(
                         [{"name": team}],
-                        season=parsed_season,
-                        round_number=parsed_round,
                     ),
                 }
             )
@@ -813,7 +949,9 @@ def get_session_laps(
                 "seconds": seconds,
                 "time": _format_classification_time(row["LapTime"]),
                 "compound": compound,
-                "compound_color": compound_colors.get(compound, "#969BA5"),
+                "compound_color": COMPOUND_COLORS.get(
+                    compound, COMPOUND_COLORS["UNKNOWN"]
+                ),
                 "outlier": inaccurate or deleted or pit_lap,
             }
         )
@@ -830,40 +968,40 @@ def get_session_laps(
 
 
 def _is_missing(value: object) -> bool:
-    """Report missing pandas and Python scalar values consistently."""
+    """Report missing Python scalar values consistently."""
     if value is None:
         return True
     try:
-        return bool(pd.isna(value))
+        comparison = value != value
+        return comparison if isinstance(comparison, bool) else False
     except TypeError, ValueError:
         return False
 
 
 def _classification_driver_code(row: dict[str, Any]) -> str:
-    """Return FastF1's short driver code, falling back to the car number."""
+    """Return a driver's short code, falling back to the car number."""
     return format_value(row.get("Abbreviation")) or format_value(
         row.get("DriverNumber")
     )
 
 
-def _get_ergast_race_laps(
+def _get_jolpica_race_laps(
     season: int,
     round_number: int,
     result_rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Return race laps from Ergast when FastF1 timing data did not load.
+    """Return archived race lap timings with unknown tyre compounds.
 
-    Ergast provides race lap times but not tyre compounds or pit-lap flags, so
-    the returned records use unknown compounds and let the normal per-driver
-    pace check classify slow laps.
+    Jolpica's compatible race lap endpoint provides lap times, but not tyre
+    compounds or pit-lap flags. The normal pace check still classifies slow laps.
 
     Args:
         season: Championship season containing the event.
         round_number: Event round in that season.
-        result_rows: FastF1 classification rows used to map driver IDs and teams.
+        result_rows: Race classification rows used to map driver IDs and teams.
 
     Returns:
-        Ergast lap records in the field format expected by ``get_session_laps``.
+        Lap records in the field format expected by ``get_session_laps``.
     """
     driver_codes: dict[str, str] = {}
     team_names: dict[str, str] = {}
@@ -875,39 +1013,39 @@ def _get_ergast_race_laps(
         driver_codes[driver_id] = code
         team_names[code] = format_value(row.get("TeamName"))
 
-    response = ergast.get_lap_times(
-        season,
-        round_number,
-        result_type="pandas",
-        limit=100,
+    response = get_jolpica_rows(
+        f"{season}/{round_number}/laps.json",
+        "RaceTable",
+        "Laps",
     )
     lap_rows: list[dict[str, Any]] = []
-    while True:
-        for table in response.content:
-            for row in table.to_dict(orient="records"):
-                driver_id = format_value(row.get("driverId"))
-                code = driver_codes.get(driver_id, "")
-                lap_number = _lap_count(row.get("number"))
-                seconds = _time_seconds(row.get("time"))
-                if not code or lap_number is None or seconds is None or seconds <= 0:
-                    continue
-                lap_rows.append(
-                    {
-                        "Driver": code,
-                        "LapNumber": lap_number,
-                        "LapTime": row.get("time"),
-                        "Compound": "UNKNOWN",
-                        "IsAccurate": True,
-                        "Deleted": False,
-                        "PitInTime": None,
-                        "PitOutTime": None,
-                        "Team": team_names.get(code, ""),
-                    }
-                )
-        try:
-            response = response.get_next_result_page()
-        except ValueError:
-            break
+    for lap in response:
+        lap_number = _lap_count(lap.get("number"))
+        timings = lap.get("Timings")
+        if lap_number is None or not isinstance(timings, list):
+            continue
+        for row in timings:
+            if not isinstance(row, dict):
+                continue
+            driver_id = format_value(row.get("driverId"))
+            code = driver_codes.get(driver_id, "")
+            lap_time = row.get("time")
+            seconds = _time_seconds(lap_time)
+            if not code or seconds is None or seconds <= 0:
+                continue
+            lap_rows.append(
+                {
+                    "Driver": code,
+                    "LapNumber": lap_number,
+                    "LapTime": lap_time,
+                    "Compound": "UNKNOWN",
+                    "IsAccurate": True,
+                    "Deleted": False,
+                    "PitInTime": None,
+                    "PitOutTime": None,
+                    "Team": team_names.get(code, ""),
+                }
+            )
     return lap_rows
 
 
@@ -938,9 +1076,12 @@ def _format_position(value: object) -> str:
 
 
 def _time_seconds(value: object) -> float | None:
-    """Convert a time-like value to seconds for sorting practice laps."""
+    """Convert numeric or clock-formatted durations to seconds."""
     if _is_missing(value):
         return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        seconds = float(value)
+        return seconds if isfinite(seconds) else None
     total_seconds = getattr(value, "total_seconds", None)
     if callable(total_seconds):
         try:
@@ -948,6 +1089,26 @@ def _time_seconds(value: object) -> float | None:
             return seconds if isfinite(seconds) else None
         except TypeError, ValueError, OverflowError:
             return None
+    if isinstance(value, str):
+        text_value = value.strip()
+        try:
+            numeric_seconds = float(text_value)
+            return numeric_seconds if isfinite(numeric_seconds) else None
+        except ValueError:
+            pass
+        parts = text_value.split(":")
+        if len(parts) not in {2, 3}:
+            return None
+        try:
+            seconds = float(parts[-1])
+            minutes = int(parts[-2])
+            hours = int(parts[-3]) if len(parts) == 3 else 0
+        except ValueError:
+            return None
+        if min(hours, minutes, seconds) < 0 or minutes >= 60 or seconds >= 60:
+            return None
+        duration = hours * 3600 + minutes * 60 + seconds
+        return duration if isfinite(duration) else None
     return None
 
 
@@ -1036,7 +1197,7 @@ def _lap_count(value: object) -> int | None:
 
 
 def _race_outcome(row: dict[str, Any]) -> str:
-    """Map a non-finisher's FastF1 status to a short result label."""
+    """Map a non-finisher's published status to a short result label."""
     status = format_value(row.get("Status")).strip().lower()
     classified = format_value(row.get("ClassifiedPosition")).strip().upper()
     if "did not start" in status or "not started" in status or status == "dns":
@@ -1120,16 +1281,6 @@ def get_race_weekend(
     """
     current_date: date = today or date.today()
     selected: tuple[int, str, OpenF1Meeting, date, date] | None = None
-    session_names: dict[str, tuple[str, str]] = {
-        "Practice 1": ("FP1", "Practice 1"),
-        "Practice 2": ("FP2", "Practice 2"),
-        "Practice 3": ("FP3", "Practice 3"),
-        "Sprint Qualifying": ("SQ", "Sprint Qualifying"),
-        "Sprint Shootout": ("SS", "Sprint Qualifying"),
-        "Sprint": ("S", "Sprint"),
-        "Qualifying": ("Q", "Qualifying"),
-        "Race": ("R", "Race"),
-    }
 
     for season in (current_date.year, current_date.year + 1):
         meetings: tuple[OpenF1Meeting, ...] = get_openf1_meetings(season)
@@ -1181,12 +1332,12 @@ def get_race_weekend(
         get_openf1_meeting_sessions(meeting["meeting_key"])
     )
     for session in openf1_sessions:
-        if session["is_cancelled"] or session["name"] not in session_names:
+        if session["is_cancelled"] or session["name"] not in _OPENF1_SESSION_OPTIONS:
             continue
         session_start = session["starts_at"]
         if session_start is None:
             continue
-        session_code, display_name = session_names[session["name"]]
+        session_code, display_name = _OPENF1_SESSION_OPTIONS[session["name"]]
         if display_name in added_names:
             continue
         track_offset = (
@@ -1245,7 +1396,7 @@ def get_race_weekend(
         "country_flag": flag_for_circuit_country(country),
         "schedule_days": schedule_days,
         "date_range": (
-            f"{start_date.strftime('%d %b')} – {end_date.strftime('%d %b %Y')}"  # noqa: RUF001 - rendered date-range punctuation.
+        f"{start_date.strftime('%d %b')} – {end_date.strftime('%d %b %Y')}"
         ),
     }
 
@@ -1296,7 +1447,7 @@ def _match_openf1_meeting_to_race(
 
 
 def parse_race_date(value: object) -> date | None:
-    """Normalize a schedule date from FastF1's raw response.
+    """Normalize a race date from Jolpica's compatible API response.
 
     Args:
         value: Date value from the race schedule response.
@@ -1310,7 +1461,7 @@ def parse_race_date(value: object) -> date | None:
         return value
     if isinstance(value, str):
         try:
-            # Ergast may provide a full timestamp; only the ISO date matters.
+            # The API may provide a full timestamp; only the ISO date matters.
             return date.fromisoformat(value[:10])
         except ValueError:
             return None
@@ -1318,7 +1469,7 @@ def parse_race_date(value: object) -> date | None:
 
 
 def format_session_time(value: object) -> str:
-    """Format a published Ergast start time as HH:MM UTC, or TBD."""
+    """Format a published session start time as HH:MM UTC, or TBD."""
     if isinstance(value, datetime):
         return (value.astimezone(UTC) if value.tzinfo is not None else value).strftime(
             "%H:%M"
@@ -1452,7 +1603,7 @@ def format_weekend_schedule(
     if last_end_date is not None:
         last_day = max(last_day, last_end_date)
     date_range = (
-        f"{first_day.strftime('%d %b')} – {last_day.strftime('%d %b %Y')}"  # noqa: RUF001 - rendered date-range punctuation.
+        f"{first_day.strftime('%d %b')} – {last_day.strftime('%d %b %Y')}"
         if first_day != last_day
         else first_day.strftime("%d %b %Y")
     )
@@ -1482,24 +1633,22 @@ def get_driver_standings(
     """Fetch driver standings and convert them to Reflex-friendly values.
 
     Args:
-        season: Season year or FastF1's ``"current"`` selector.
-        round: Round number or FastF1's ``"last"`` selector.
+        season: Season year or Jolpica's ``"current"`` selector.
+        round: Round number or Jolpica's ``"last"`` selector.
 
     Returns:
         Driver standing records with all values normalized to strings.
     """
-    # Request the raw response so each returned row can be normalized here.
-    response: list[dict[str, Any]] = ergast.get_driver_standings(
-        season=season, round=round, result_type="raw"
+    response = get_jolpica_rows(
+        f"{season}/{round}/driverStandings.json",
+        "StandingsTable",
+        "StandingsLists",
     )
     if not response:
         return []
 
-    # Extract the raw rows and build the smaller shape consumed by the UI.
-    rows: list[dict[str, Any]] = response[0].get("DriverStandings", [])
+    rows = response[0].get("DriverStandings", [])
     standings: list[dict[str, str]] = []
-    parsed_season: int | None = parse_integer(season)
-    parsed_round: int | None = parse_integer(round)
     for row in rows:
         driver: dict[str, Any] = row.get("Driver", {})
         constructors: list[dict[str, Any]] = row.get("Constructors", [])
@@ -1511,8 +1660,6 @@ def get_driver_standings(
         team_color: str = get_team_color(
             constructors,
             row.get("teamColor") or row.get("TeamColor"),
-            season=parsed_season,
-            round_number=parsed_round,
         )
         standings.append(
             {
@@ -1533,24 +1680,22 @@ def get_constructor_standings(
     """Fetch constructor standings and normalize them for the UI.
 
     Args:
-        season: Season year or FastF1's ``"current"`` selector.
-        round: Round number or FastF1's ``"last"`` selector.
+        season: Season year or Jolpica's ``"current"`` selector.
+        round: Round number or Jolpica's ``"last"`` selector.
 
     Returns:
         Constructor standing records with all values normalized to strings.
     """
-    # Request raw constructor rows and handle an empty response consistently.
-    response: list[dict[str, Any]] = ergast.get_constructor_standings(
-        season=season, round=round, result_type="raw"
+    response = get_jolpica_rows(
+        f"{season}/{round}/constructorStandings.json",
+        "StandingsTable",
+        "StandingsLists",
     )
     if not response:
         return []
 
-    # Flatten each response row and attach the matching team color.
-    rows: list[dict[str, Any]] = response[0].get("ConstructorStandings", [])
+    rows = response[0].get("ConstructorStandings", [])
     standings: list[dict[str, str]] = []
-    parsed_season: int | None = parse_integer(season)
-    parsed_round: int | None = parse_integer(round)
     for row in rows:
         constructor: dict[str, Any] = row.get("Constructor") or {}
         standings.append(
@@ -1560,8 +1705,6 @@ def get_constructor_standings(
                 "points": format_value(row.get("points")),
                 "team_color": get_team_color(
                     [constructor],
-                    season=parsed_season,
-                    round_number=parsed_round,
                 ),
             }
         )
@@ -1571,16 +1714,12 @@ def get_constructor_standings(
 def get_team_color(
     constructors: list[dict[str, Any]],
     api_color: object = None,
-    season: int | None = None,
-    round_number: int | None = None,
 ) -> str:
-    """Choose an API-provided, session-derived, or fallback team color.
+    """Choose an API-provided or fallback team color.
 
     Args:
         constructors: Constructor records that may include a color or ID.
         api_color: Optional color supplied alongside the standings row.
-        season: Season for looking up the matching FastF1 race session.
-        round_number: Race round for looking up the matching session.
 
     Returns:
         A CSS hex color string.
@@ -1603,88 +1742,13 @@ def get_team_color(
         if re.fullmatch(r"[0-9A-Fa-f]{6}", hex_value):
             return f"#{hex_value}"
 
-    # Use the season and round's official F1 timing feed when Ergast has no
-    # team color. FastF1's plotting helper reads the session's driver/team data.
-    if season is not None and round_number is not None:
-        for constructor in constructors:
-            for team_name in (
-                constructor.get("name"),
-                constructor.get("constructorId"),
-            ):
-                if _is_missing(team_name) or not format_value(team_name):
-                    continue
-                dynamic_color: str = get_session_team_color(
-                    format_value(team_name), season, round_number
-                )
-                if dynamic_color:
-                    return dynamic_color
-
-    # Keep a local fallback for seasons without F1 timing data and API outages.
+    # Keep a local fallback for seasons without provider colors and API outages.
     for constructor in constructors:
         constructor_id: str = format_value(constructor.get("constructorId")).lower()
         if constructor_id in TEAM_COLORS:
             return TEAM_COLORS[constructor_id]
 
     return "#808080"
-
-
-@lru_cache(maxsize=32)
-def get_f1_session(season: int, round_number: int) -> Session | None:
-    """Return the cached FastF1 race session for dynamic team colors.
-
-    Timing data is available from 2018 onwards. Older seasons and unavailable
-    sessions use the local palette fallback instead.
-
-    Args:
-        season: Championship season to look up.
-        round_number: Race round in that season.
-
-    Returns:
-        The race session, or ``None`` if timing data cannot be used.
-    """
-    if season < 2018:
-        return None
-    try:
-        return fastf1.get_session(
-            season,
-            round_number,
-            "R",
-            backend="f1timing",
-        )
-    except Exception:  # noqa: BLE001 - missing timing sessions use local colors.
-        # Color lookup must not make standings unavailable.
-        return None
-
-
-@lru_cache(maxsize=128)
-def get_session_team_color(
-    team_name: str,
-    season: int,
-    round_number: int,
-) -> str:
-    """Read a team's official color from the matching race's timing feed.
-
-    Args:
-        team_name: Constructor name or ID to match in the session.
-        season: Championship season to look up.
-        round_number: Race round in that season.
-
-    Returns:
-        A CSS hex color, or an empty string when the lookup fails.
-    """
-    session: Session | None = get_f1_session(season, round_number)
-    if session is None:
-        return ""
-    try:
-        color: str = fastf1.plotting.get_team_color(
-            team_name,
-            session,
-            colormap="official",
-        )
-    except Exception:  # noqa: BLE001 - unknown team names use the fallback palette.
-        # Unknown names and missing timing data fall through to the palette.
-        return ""
-    return color if re.fullmatch(r"#[0-9A-Fa-f]{6}", color) else ""
 
 
 def parse_integer(value: object) -> int | None:
