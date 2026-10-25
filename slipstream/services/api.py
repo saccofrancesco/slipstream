@@ -1572,10 +1572,7 @@ def format_weekend_schedule(
                     utc_end = datetime.fromisoformat(session["ends_at"])
                     if utc_end > utc_start:
                         local_end = utc_end.astimezone(target_zone)
-                        day_offset = (local_end.date() - display_date).days
                         display_end_time = local_end.strftime("%H:%M")
-                        if day_offset > 0:
-                            display_end_time += f" (+{day_offset}d)"
                         if last_end_date is None or local_end.date() > last_end_date:
                             last_end_date = local_end.date()
             else:
