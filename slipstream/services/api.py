@@ -16,17 +16,21 @@ from .jolpica import get_jolpica_rows
 from .openf1 import (
     OPENF1_FIRST_HISTORICAL_SEASON,
     OpenF1Driver,
+    OpenF1DriverChampionship,
     OpenF1Meeting,
     OpenF1MeetingSession,
     OpenF1SessionResult,
     OpenF1SessionData,
+    OpenF1TeamChampionship,
     get_openf1_event_sessions,
+    get_openf1_driver_championship,
     get_openf1_meeting_sessions,
     get_openf1_meetings,
     get_openf1_session_data,
     get_openf1_session_drivers,
     get_openf1_session_key,
     get_openf1_session_results,
+    get_openf1_team_championship,
 )
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -1607,8 +1611,7 @@ def format_weekend_schedule(
     return display_days, date_range
 
 
-# Fallback colors keyed by constructor IDs in the standings response. The
-# endpoint does not consistently provide team colors.
+# Fallback colors keyed by constructor IDs in Jolpica standings responses.
 TEAM_COLORS: dict[str, str] = {
     "alpine": "#0093cc",
     "aston_martin": "#229971",
@@ -1624,6 +1627,116 @@ TEAM_COLORS: dict[str, str] = {
 }
 
 
+def _jolpica_driver_standing_metadata(
+    season: int, round_number: int
+) -> dict[int, dict[str, str]]:
+    """Get display metadata for championship drivers missing from a race roster."""
+    response = get_jolpica_rows(
+        f"{season}/{round_number}/driverStandings.json",
+        "StandingsTable",
+        "StandingsLists",
+    )
+    if not response:
+        return {}
+
+    rows = response[0].get("DriverStandings", [])
+    if not isinstance(rows, list):
+        return {}
+
+    metadata: dict[int, dict[str, str]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        driver = row.get("Driver")
+        if not isinstance(driver, dict):
+            continue
+        driver_number = parse_integer(driver.get("permanentNumber"))
+        if driver_number is None:
+            continue
+
+        raw_constructors = row.get("Constructors")
+        constructors = (
+            [item for item in raw_constructors if isinstance(item, dict)]
+            if isinstance(raw_constructors, list)
+            else []
+        )
+        team_names = [
+            str(constructor["name"])
+            for constructor in constructors
+            if constructor.get("name")
+        ]
+        metadata[driver_number] = {
+            "given_name": format_value(driver.get("givenName")),
+            "family_name": format_value(driver.get("familyName")),
+            "team": ", ".join(team_names),
+            "team_color": get_team_color(constructors),
+        }
+    return metadata
+
+
+def _openf1_driver_standings(
+    season: int, round_number: int
+) -> list[dict[str, str]]:
+    """Combine OpenF1 championship scores with driver and team display details."""
+    session_key = get_openf1_session_key(season, round_number, "R")
+    championship: tuple[OpenF1DriverChampionship, ...] = (
+        get_openf1_driver_championship(session_key)
+    )
+    if not championship:
+        return []
+
+    drivers: dict[int, OpenF1Driver] = {
+        driver["driver_number"]: driver
+        for driver in get_openf1_session_drivers(session_key)
+    }
+    missing_numbers = {
+        row["driver_number"]
+        for row in championship
+        if row["driver_number"] not in drivers
+    }
+    legacy_metadata: dict[int, dict[str, str]] = {}
+    if missing_numbers:
+        try:
+            legacy_metadata = _jolpica_driver_standing_metadata(season, round_number)
+        except Exception:
+            logger.warning(
+                "Could not load fallback driver labels for OpenF1 standings",
+                exc_info=True,
+                extra={"season": season, "round": round_number},
+            )
+
+    standings: list[dict[str, str]] = []
+    for row in sorted(championship, key=lambda item: item["position_current"]):
+        driver_number = row["driver_number"]
+        driver = drivers.get(driver_number)
+        fallback = legacy_metadata.get(driver_number, {})
+        if driver is None:
+            given_name = fallback.get("given_name") or "Driver"
+            family_name = fallback.get("family_name") or str(driver_number)
+            team = fallback.get("team", "")
+            team_color = fallback.get("team_color", "#808080")
+        else:
+            given_name = driver["first_name"] or fallback.get("given_name", "")
+            family_name = driver["last_name"] or fallback.get("family_name", "")
+            team = driver["team_name"] or fallback.get("team", "")
+            team_color = (
+                fallback.get("team_color", driver["team_color"])
+                if driver["team_color"] == "#808080"
+                else driver["team_color"]
+            )
+        standings.append(
+            {
+                "position": format_value(row["position_current"]),
+                "given_name": given_name,
+                "family_name": family_name,
+                "team": team,
+                "points": format_value(row["points_current"]),
+                "team_color": team_color,
+            }
+        )
+    return standings
+
+
 def get_driver_standings(
     season: int | str = "current", round: int | str = "last"
 ) -> list[dict[str, str]]:
@@ -1636,6 +1749,24 @@ def get_driver_standings(
     Returns:
         Driver standing records with all values normalized to strings.
     """
+    parsed_season = parse_integer(season)
+    parsed_round = parse_integer(round)
+    if (
+        parsed_season is not None
+        and parsed_round is not None
+        and parsed_season >= OPENF1_FIRST_HISTORICAL_SEASON
+    ):
+        try:
+            standings = _openf1_driver_standings(parsed_season, parsed_round)
+            if standings:
+                return standings
+        except Exception:
+            logger.warning(
+                "OpenF1 driver standings are unavailable; checking the race archive",
+                exc_info=True,
+                extra={"season": parsed_season, "round": parsed_round},
+            )
+
     response = get_jolpica_rows(
         f"{season}/{round}/driverStandings.json",
         "StandingsTable",
@@ -1683,6 +1814,44 @@ def get_constructor_standings(
     Returns:
         Constructor standing records with all values normalized to strings.
     """
+    parsed_season = parse_integer(season)
+    parsed_round = parse_integer(round)
+    if (
+        parsed_season is not None
+        and parsed_round is not None
+        and parsed_season >= OPENF1_FIRST_HISTORICAL_SEASON
+    ):
+        try:
+            session_key = get_openf1_session_key(parsed_season, parsed_round, "R")
+            championship: tuple[OpenF1TeamChampionship, ...] = (
+                get_openf1_team_championship(session_key)
+            )
+            if championship:
+                team_colors: dict[str, str] = {
+                    driver["team_name"].casefold(): driver["team_color"]
+                    for driver in get_openf1_session_drivers(session_key)
+                    if driver["team_name"]
+                }
+                return [
+                    {
+                        "position": format_value(row["position_current"]),
+                        "constructor": row["team_name"],
+                        "points": format_value(row["points_current"]),
+                        "team_color": team_colors.get(
+                            row["team_name"].casefold(), "#808080"
+                        ),
+                    }
+                    for row in sorted(
+                        championship, key=lambda item: item["position_current"]
+                    )
+                ]
+        except Exception:
+            logger.warning(
+                "OpenF1 team standings are unavailable; checking the race archive",
+                exc_info=True,
+                extra={"season": parsed_season, "round": parsed_round},
+            )
+
     response = get_jolpica_rows(
         f"{season}/{round}/constructorStandings.json",
         "StandingsTable",

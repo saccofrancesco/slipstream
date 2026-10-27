@@ -89,6 +89,22 @@ class OpenF1Driver(TypedDict):
     team_color: str
 
 
+class OpenF1DriverChampionship(TypedDict):
+    """One driver's position and points after a race session."""
+
+    driver_number: int
+    position_current: int
+    points_current: float
+
+
+class OpenF1TeamChampionship(TypedDict):
+    """One team's position and points after a race session."""
+
+    team_name: str
+    position_current: int
+    points_current: float
+
+
 class OpenF1SessionResult(TypedDict):
     """One driver's published position and timing after a session."""
 
@@ -494,6 +510,72 @@ def _session_drivers(session_key: int) -> tuple[OpenF1Driver, ...]:
 def get_openf1_session_drivers(session_key: int) -> tuple[OpenF1Driver, ...]:
     """Return cached driver names and team colors for one session."""
     return _session_drivers(session_key)
+
+
+@_openf1_cached(ttl_seconds=5 * 60)
+def _driver_championship(
+    session_key: int,
+) -> tuple[OpenF1DriverChampionship, ...]:
+    """Load the championship standings published for one race session."""
+    standings: list[OpenF1DriverChampionship] = []
+    for row in _request_rows("championship_drivers", {"session_key": session_key}):
+        driver_number = _integer(row.get("driver_number"))
+        position = _integer(row.get("position_current"))
+        points = _number(row.get("points_current"))
+        if driver_number is None or position is None or points is None:
+            continue
+        standings.append(
+            {
+                "driver_number": driver_number,
+                "position_current": position,
+                "points_current": points,
+            }
+        )
+    return tuple(standings)
+
+
+def get_openf1_driver_championship(
+    session_key: int,
+) -> tuple[OpenF1DriverChampionship, ...]:
+    """Return cached driver championship standings for one race session."""
+    return _driver_championship(session_key)
+
+
+@_openf1_cached(ttl_seconds=5 * 60)
+def _team_championship(
+    session_key: int,
+) -> tuple[OpenF1TeamChampionship, ...]:
+    """Load the team championship standings published for one race session."""
+    standings: list[OpenF1TeamChampionship] = []
+    seen_teams: set[str] = set()
+    for row in _request_rows("championship_teams", {"session_key": session_key}):
+        team_name = str(row.get("team_name") or "").strip()
+        position = _integer(row.get("position_current"))
+        points = _number(row.get("points_current"))
+        normalized_name = team_name.casefold()
+        if (
+            not team_name
+            or normalized_name in seen_teams
+            or position is None
+            or points is None
+        ):
+            continue
+        standings.append(
+            {
+                "team_name": team_name,
+                "position_current": position,
+                "points_current": points,
+            }
+        )
+        seen_teams.add(normalized_name)
+    return tuple(standings)
+
+
+def get_openf1_team_championship(
+    session_key: int,
+) -> tuple[OpenF1TeamChampionship, ...]:
+    """Return cached team championship standings for one race session."""
+    return _team_championship(session_key)
 
 
 @_openf1_cached(ttl_seconds=_OPENF1_SAMPLE_TTL_SECONDS)
