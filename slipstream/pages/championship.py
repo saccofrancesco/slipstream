@@ -17,8 +17,8 @@ from slipstream.services.cached import (
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-class ChampionshipState(rx.State):
-    """Hold the latest standings and loading feedback for one championship."""
+class ChampionshipState(rx.State, mixin=True):
+    """Share championship behavior while keeping each route's state independent."""
 
     championship_kind: ClassVar[Literal["driver", "constructor"]] = "driver"
     minimum_season: ClassVar[int] = 1950

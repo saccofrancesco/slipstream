@@ -9,7 +9,7 @@ from slipstream.components.championship import championship_page
 from .championship import ChampionshipState
 
 
-class ConstructorsState(ChampionshipState):
+class ConstructorsState(ChampionshipState, rx.State):
     """Configure shared championship loading for constructor standings."""
 
     championship_kind: ClassVar[Literal["constructor"]] = "constructor"
