@@ -74,10 +74,10 @@ Open **http://localhost:3000** once Reflex starts. On Windows, activate the virt
 The featured current or upcoming race weekend uses OpenF1 meeting and session
 records for event details and scheduled start/end times. OpenF1's free
 historical API supplies published session classifications, lap times, tyre
-compounds, car telemetry, and track positions from 2023 onward. Jolpica F1's
-Ergast-compatible API supplies calendars, standings, and older race,
-qualifying, sprint, and race-lap data where available. Older events do not
-include practice timing or telemetry.
+compounds, car telemetry, track positions, and race-session championship
+standings from 2023 onward. Jolpica F1's Ergast-compatible API supplies
+calendars, pre-2023 standings, and older race, qualifying, sprint, and race-lap
+data where available. Older events do not include practice timing or telemetry.
 
 ---
 
@@ -105,8 +105,8 @@ Slipstream uses the following libraries and data sources:
 
 * [Python](https://www.python.org/)
 * [Reflex](https://reflex.dev/)
-* [OpenF1](https://openf1.org/) for race-weekend schedules and historical classifications, lap, tyre, telemetry, and position data from 2023 onward
-* [Jolpica F1](https://github.com/jolpica/jolpica-f1) for championship calendars, standings, and older race, qualifying, sprint, and race-lap data
+* [OpenF1](https://openf1.org/) for race-weekend schedules, championship standings, and historical classifications, lap, tyre, telemetry, and position data from 2023 onward
+* [Jolpica F1](https://github.com/jolpica/jolpica-f1) for championship calendars, pre-2023 standings, and older race, qualifying, sprint, and race-lap data
 
 ---
 
