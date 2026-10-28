@@ -4,6 +4,7 @@ import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from datetime import date
+from typing import TypedDict
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import reflex as rx
@@ -36,6 +37,13 @@ from slipstream.services.cached import (
 logger: logging.Logger = logging.getLogger(__name__)
 
 
+class DisplaySchedule(TypedDict):
+    """Formatted sessions and their matching visitor or circuit date range."""
+
+    days: list[ScheduleDay]
+    date_range: str
+
+
 class ResultsState(rx.State):
     """Hold the featured weekend, its schedule, and the season archive.
 
@@ -53,16 +61,7 @@ class ResultsState(rx.State):
     archive_error: str = ""
     viewer_timezone: str = "UTC"
     track_time: bool = False
-
-    @rx.var
-    def has_race_weekend(self) -> bool:
-        """Report whether the calendar contains a current or future weekend."""
-        return bool(self.race_weekend)
-
-    @rx.var
-    def has_past_events(self) -> bool:
-        """Report whether the chosen season has any completed races."""
-        return bool(self.past_events)
+    display_schedule: DisplaySchedule = {"days": [], "date_range": ""}
 
     @rx.var
     def weekend_heading(self) -> str:
@@ -89,27 +88,19 @@ class ResultsState(rx.State):
     @rx.var
     def schedule_column_count(self) -> str:
         """Give the schedule grid one column per date, with one as a minimum."""
-        return str(max(len(self.display_schedule_days), 1))
+        return str(max(len(self.display_schedule["days"]), 1))
 
-    @rx.var
-    def display_schedule_days(self) -> list[ScheduleDay]:
-        """Show sessions on the visitor's or the circuit's calendar dates."""
-        days, _ = format_weekend_schedule(
+    def _refresh_display_schedule(self) -> None:
+        """Format schedule dates once after a display preference changes."""
+        days, date_range = format_weekend_schedule(
             self.schedule_days,
             self.viewer_timezone,
             "track" if self.track_time else "my",
         )
-        return days
-
-    @rx.var
-    def display_date_range(self) -> str:
-        """Keep the weekend date range in the selected timezone."""
-        _, date_range = format_weekend_schedule(
-            self.schedule_days,
-            self.viewer_timezone,
-            "track" if self.track_time else "my",
-        )
-        return date_range or self.race_weekend.get("date_range", "")
+        self.display_schedule = {
+            "days": days,
+            "date_range": date_range or self.race_weekend.get("date_range", ""),
+        }
 
     @rx.var
     def track_time_available(self) -> bool:
@@ -137,11 +128,13 @@ class ResultsState(rx.State):
             self.viewer_timezone = "UTC"
         else:
             self.viewer_timezone = timezone_name
+        self._refresh_display_schedule()
 
     @rx.event
     def set_track_time(self, enabled: bool) -> None:
         """Use circuit time when the switch is on and an offset exists."""
         self.track_time = enabled and self.track_time_available
+        self._refresh_display_schedule()
 
     @rx.event
     async def load_race_weekend(self) -> AsyncGenerator[None]:
@@ -162,6 +155,7 @@ class ResultsState(rx.State):
         self.track_time = False
         self.past_events = []
         self.archive_season = str(current_date.year)
+        self._refresh_display_schedule()
         yield
         try:
             # The provider clients are synchronous; keep their requests off the
@@ -243,6 +237,7 @@ class ResultsState(rx.State):
             self.error = "Could not load the race schedule. Please try again."
         finally:
             self.loading = False
+            self._refresh_display_schedule()
         yield
 
         try:
@@ -290,12 +285,12 @@ def results() -> rx.Component:
                         ResultsState.error != "",
                         status_card("Weekend overview unavailable", ResultsState.error),
                         rx.cond(
-                            ResultsState.has_race_weekend,
+                            ResultsState.race_weekend.length() > 0,
                             race_weekend_card(
                                 ResultsState.race_weekend,
-                                ResultsState.display_schedule_days,
+                                ResultsState.display_schedule["days"],
                                 ResultsState.schedule_column_count,
-                                ResultsState.display_date_range,
+                                ResultsState.display_schedule["date_range"],
                                 ResultsState.track_time,
                                 ResultsState.track_time_available,
                                 ResultsState.set_track_time,
@@ -312,7 +307,7 @@ def results() -> rx.Component:
                     ResultsState.past_events,
                     ResultsState.archive_loading,
                     ResultsState.archive_error,
-                    ResultsState.has_past_events,
+                    ResultsState.past_events.length() > 0,
                 ),
                 align="stretch",
                 spacing="6",

@@ -22,7 +22,7 @@ def drivers() -> rx.Component:
         DriversState.podium_standings,
         DriversState.remaining_standings,
         DriversState.has_remaining_standings,
-        DriversState.has_standings,
+        DriversState.standings.length() > 0,
         DriversState.loading,
         DriversState.error,
         active_section="drivers",

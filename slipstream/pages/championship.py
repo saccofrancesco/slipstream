@@ -42,11 +42,6 @@ class ChampionshipState(rx.State, mixin=True):
         """Report whether standings remain after the podium."""
         return len(self.standings) > 3
 
-    @rx.var
-    def has_standings(self) -> bool:
-        """Report whether any standings were loaded."""
-        return bool(self.standings)
-
     @rx.event
     async def load_standings(self) -> AsyncGenerator[None]:
         """Load the newest completed race's standings for this page.

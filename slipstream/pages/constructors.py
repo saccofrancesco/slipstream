@@ -23,7 +23,7 @@ def constructors() -> rx.Component:
         ConstructorsState.podium_standings,
         ConstructorsState.remaining_standings,
         ConstructorsState.has_remaining_standings,
-        ConstructorsState.has_standings,
+        ConstructorsState.standings.length() > 0,
         ConstructorsState.loading,
         ConstructorsState.error,
         active_section="teams",
