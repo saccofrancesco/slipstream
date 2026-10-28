@@ -1,7 +1,5 @@
 """Typed, rate-limited access to OpenF1 meeting schedules and race data."""
 
-import re
-import unicodedata
 from collections import deque
 from collections.abc import Callable, Hashable
 from datetime import UTC, date, datetime, timedelta
@@ -16,6 +14,7 @@ import requests
 from .cache import TTLCache
 from .catalog import OPENF1_SESSION_NAMES
 from .jolpica import get_jolpica_rows
+from .normalization import normalize_event_name
 
 OPENF1_BASE_URL: str = "https://api.openf1.org/v1"
 OPENF1_FIRST_HISTORICAL_SEASON: int = 2023
@@ -343,12 +342,6 @@ def get_openf1_meetings(season: int) -> tuple[OpenF1Meeting, ...]:
     return _race_meetings(season)
 
 
-def _normalized_event_name(value: str) -> str:
-    """Return an accent- and punctuation-insensitive event name."""
-    ascii_value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore")
-    return re.sub(r"[^a-z0-9]+", " ", ascii_value.decode().lower()).strip()
-
-
 @_openf1_cached()
 def _jolpica_event_identity(season: int, round_number: int) -> tuple[str, date]:
     """Load the official race name/date used by Slipstream's archive route."""
@@ -368,12 +361,12 @@ def _resolve_meeting(season: int, round_number: int) -> OpenF1Meeting:
     """Match a championship round without cancelled meetings shifting indexes."""
     event_name, race_date = _jolpica_event_identity(season, round_number)
     meetings = _race_meetings(season)
-    normalized_name = _normalized_event_name(event_name)
+    normalized_name = normalize_event_name(event_name)
     exact = next(
         (
             meeting
             for meeting in meetings
-            if _normalized_event_name(meeting["name"]) == normalized_name
+            if normalize_event_name(meeting["name"]) == normalized_name
         ),
         None,
     )
@@ -682,38 +675,34 @@ def get_openf1_session_data(
     }
 
 
-def find_openf1_lap(
+def find_openf1_laps(
     season: int,
     round_number: int,
     session_code: str,
-    driver_code: str,
-    lap_number: int,
-) -> tuple[int, OpenF1Lap]:
-    """Resolve a selected display driver and lap to its OpenF1 record."""
+    selected_laps: tuple[tuple[str, int], ...],
+) -> tuple[int, dict[tuple[str, int], OpenF1Lap]]:
+    """Resolve several display laps from one copy of the session collections."""
     session_key = get_openf1_session_key(season, round_number, session_code)
-    normalized_code = driver_code.strip().upper()
-    driver_number = next(
-        (
-            driver["driver_number"]
-            for driver in _session_drivers(session_key)
-            if driver["code"] == normalized_code
-        ),
-        None,
-    )
-    if driver_number is None:
-        raise LookupError("The selected OpenF1 driver could not be found")
-    lap = next(
-        (
-            item
-            for item in _session_laps(session_key)
-            if item["driver_number"] == driver_number
-            and item["lap_number"] == lap_number
-        ),
-        None,
-    )
-    if lap is None:
-        raise LookupError("The selected OpenF1 lap could not be found")
-    return session_key, lap
+    driver_numbers: dict[str, int] = {}
+    driver_codes: dict[int, str] = {}
+    for driver in _session_drivers(session_key):
+        code = driver["code"].strip().upper()
+        driver_number = driver["driver_number"]
+        driver_numbers.setdefault(code, driver_number)
+        driver_codes.setdefault(driver_number, code)
+    wanted = {(code.strip().upper(), number) for code, number in selected_laps}
+    laps: dict[tuple[str, int], OpenF1Lap] = {}
+    for lap in _session_laps(session_key):
+        driver_number = lap["driver_number"]
+        code = driver_codes.get(driver_number)
+        key = (code, lap["lap_number"]) if code is not None else None
+        if (
+            key is not None
+            and key in wanted
+            and driver_number == driver_numbers[code]
+        ):
+            laps.setdefault(key, lap)
+    return session_key, laps
 
 
 @_openf1_cached(ttl_seconds=_OPENF1_SAMPLE_TTL_SECONDS)

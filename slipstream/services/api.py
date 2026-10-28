@@ -2,7 +2,6 @@
 
 import logging
 import re
-import unicodedata
 from datetime import UTC, date, datetime, time, timedelta, timezone
 from math import ceil, isfinite
 from statistics import median
@@ -13,6 +12,7 @@ from .cache import TTLCache
 from .catalog import COMPOUND_COLORS, EVENT_SESSION_FIELDS, SUPPORTED_SESSION_CODES
 from .flags import flag_for_circuit_country
 from .jolpica import get_jolpica_rows
+from .normalization import normalize_event_name
 from .openf1 import (
     OPENF1_FIRST_HISTORICAL_SEASON,
     OpenF1Driver,
@@ -1405,17 +1405,11 @@ def get_race_weekend(
     }
 
 
-def _normalize_event_name(value: str) -> str:
-    """Return an accent- and punctuation-insensitive Grand Prix name."""
-    ascii_value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore")
-    return re.sub(r"[^a-z0-9]+", " ", ascii_value.decode().lower()).strip()
-
-
 def _match_openf1_meeting_to_race(
     meeting: OpenF1Meeting, races: list[dict[str, Any]]
 ) -> dict[str, Any] | None:
     """Find the legacy round and canonical circuit name for an OpenF1 meeting."""
-    meeting_name = _normalize_event_name(meeting["name"])
+    meeting_name = normalize_event_name(meeting["name"])
     valid_races = [
         race
         for race in races
@@ -1426,7 +1420,7 @@ def _match_openf1_meeting_to_race(
         (
             race
             for race in valid_races
-            if _normalize_event_name(format_value(race.get("raceName")))
+            if normalize_event_name(format_value(race.get("raceName")))
             == meeting_name
         ),
         None,

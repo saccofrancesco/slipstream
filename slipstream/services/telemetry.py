@@ -15,7 +15,7 @@ from .openf1 import (
     OpenF1CarSample,
     OpenF1Lap,
     OpenF1LocationSample,
-    find_openf1_lap,
+    find_openf1_laps,
     get_openf1_car_data,
     get_openf1_circuit_rotation,
     get_openf1_location_data,
@@ -74,6 +74,7 @@ class TelemetryTrackPoint(TypedDict):
 
     x: float
     y: float
+    distance: float
 
 
 class TelemetryTrackSegment(TypedDict):
@@ -462,8 +463,12 @@ def _openf1_track_geometry(
 
     return (
         [
-            {"x": round(float(x), 3), "y": round(float(y), 3)}
-            for x, y in zip(trace_x, trace_y, strict=True)
+            {
+                "x": round(float(x), 3),
+                "y": round(float(y), 3),
+                "distance": round(float(distance), 2),
+            }
+            for x, y, distance in zip(trace_x, trace_y, grid, strict=True)
         ],
         _mini_sector_segments(grid, available, sampled),
         [],
@@ -496,12 +501,22 @@ def _get_openf1_session_telemetry(
     """Load free OpenF1 car and position data for selected historical laps."""
     available: list[_LapSamples] = []
     unavailable: list[str] = []
+    if not selected_laps:
+        return _empty_session_telemetry(unavailable)
+    try:
+        session_key, laps_by_selection = find_openf1_laps(
+            season, round_number, session_code, selected_laps
+        )
+    except LookupError, ValueError:
+        return _empty_session_telemetry(
+            [f"{driver} lap {number}" for driver, number in selected_laps]
+        )
     for driver, number in selected_laps:
         label = f"{driver} lap {number}"
         try:
-            session_key, lap = find_openf1_lap(
-                season, round_number, session_code, driver, number
-            )
+            lap = laps_by_selection.get((driver.strip().upper(), number))
+            if lap is None:
+                raise LookupError("The selected OpenF1 lap could not be found")
             car_samples = get_openf1_car_data(session_key, lap["driver_number"], lap)
             available.append(_openf1_lap_samples(lap, car_samples, driver, number))
         except LookupError, ValueError:
