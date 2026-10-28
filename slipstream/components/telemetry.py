@@ -25,6 +25,14 @@ CHART_HEIGHTS: dict[str, int] = {
     "rpm": 205,
     "gear": 205,
 }
+TELEMETRY_CHARTS: tuple[tuple[str, str, bool], ...] = (
+    ("speed", "SPEED (km/h)", False),
+    ("delta", "DELTA (s)", False),
+    ("throttle", "THROTTLE (%)", False),
+    ("brake", "BRAKE", False),
+    ("rpm", "RPM", False),
+    ("gear", "GEAR", True),
+)
 
 
 class TelemetryLine(TypedDict):
@@ -440,67 +448,20 @@ def telemetry_section(
                     telemetry_track_sync(
                         rx.box(
                             rx.vstack(
-                                _telemetry_chart(
-                                    "speed",
-                                    "SPEED (km/h)",
-                                    rows,
-                                    lines,
-                                    axes["speed"],
-                                    corners,
-                                    sectors,
-                                    distance_metres,
-                                ),
-                                _telemetry_chart(
-                                    "delta",
-                                    "DELTA (s)",
-                                    rows,
-                                    lines,
-                                    axes["delta"],
-                                    corners,
-                                    sectors,
-                                    distance_metres,
-                                ),
-                                _telemetry_chart(
-                                    "throttle",
-                                    "THROTTLE (%)",
-                                    rows,
-                                    lines,
-                                    axes["throttle"],
-                                    corners,
-                                    sectors,
-                                    distance_metres,
-                                ),
-                                _telemetry_chart(
-                                    "brake",
-                                    "BRAKE",
-                                    rows,
-                                    lines,
-                                    axes["brake"],
-                                    corners,
-                                    sectors,
-                                    distance_metres,
-                                ),
-                                _telemetry_chart(
-                                    "rpm",
-                                    "RPM",
-                                    rows,
-                                    lines,
-                                    axes["rpm"],
-                                    corners,
-                                    sectors,
-                                    distance_metres,
-                                ),
-                                _telemetry_chart(
-                                    "gear",
-                                    "GEAR",
-                                    rows,
-                                    lines,
-                                    axes["gear"],
-                                    corners,
-                                    sectors,
-                                    distance_metres,
-                                    last=True,
-                                ),
+                                *[
+                                    _telemetry_chart(
+                                        metric,
+                                        label,
+                                        rows,
+                                        lines,
+                                        axes[metric],
+                                        corners,
+                                        sectors,
+                                        distance_metres,
+                                        last=last,
+                                    )
+                                    for metric, label, last in TELEMETRY_CHARTS
+                                ],
                                 width="100%",
                                 min_width=CHART_MIN_WIDTH,
                                 align="stretch",
