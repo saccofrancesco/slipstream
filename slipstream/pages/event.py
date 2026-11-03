@@ -1,6 +1,7 @@
 """Archive event detail route and its selected-session classification state."""
 
 import asyncio
+import json
 import logging
 from collections.abc import AsyncGenerator
 from math import floor
@@ -69,6 +70,69 @@ class SelectedLap(TypedDict):
     number: int
 
 
+def _restore_selection(
+    drivers_query: str,
+    laps_query: str,
+    drivers: list[LapDriver],
+    laps: list[LapPoint],
+) -> tuple[list[str], list[SelectedLap]]:
+    """Validate shared selections against the loaded session, preserving order."""
+    available_drivers = {driver["code"] for driver in drivers}
+    selected_drivers = list(
+        dict.fromkeys(
+            code for code in drivers_query.split(",") if code in available_drivers
+        )
+    )
+    available_laps = {(lap["driver"], lap["number"]) for lap in laps}
+    selected_laps: list[SelectedLap] = []
+    seen: set[tuple[str, int]] = set()
+    for item in laps_query.split(","):
+        code, separator, number_text = item.partition(":")
+        if not separator or not number_text.isascii() or not number_text.isdecimal():
+            continue
+        if len(number_text) > 6:
+            continue
+        key = (code, int(number_text))
+        if code not in selected_drivers or key not in available_laps or key in seen:
+            continue
+        seen.add(key)
+        selected_laps.append({"driver": code, "number": key[1]})
+        if len(selected_laps) == MAX_SELECTED_TELEMETRY_LAPS:
+            break
+    return selected_drivers, selected_laps
+
+
+def _selection_url_script(
+    path: str,
+    session: str,
+    tab: str,
+    drivers: list[str],
+    laps: list[SelectedLap],
+    pending_drivers: str | None = None,
+    pending_laps: str | None = None,
+) -> str:
+    """Update only event selection parameters on the current browser URL."""
+    values = {
+        "session": session,
+        "tab": tab,
+        "drivers": pending_drivers if pending_drivers is not None else ",".join(drivers),
+        "laps": (
+            pending_laps
+            if pending_laps is not None
+            else ",".join(f"{lap['driver']}:{lap['number']}" for lap in laps)
+        ),
+    }
+    return (
+        "(() => { const url = new URL(window.location.href); "
+        f"if (url.pathname !== {json.dumps(path)}) return; "
+        f"const values = {json.dumps(values)}; "
+        "for (const [key, value] of Object.entries(values)) { "
+        "if (value) url.searchParams.set(key, value); "
+        "else url.searchParams.delete(key); } "
+        "window.history.replaceState(window.history.state, '', url); })()"
+    )
+
+
 def _lap_chart_axis(times: list[float]) -> LapChartAxis:
     """Fit axis bounds and distinct labels to the laps plotted on the chart."""
     if not times:
@@ -133,6 +197,9 @@ class EventState(rx.State):
     laps_loading: bool = False
     laps_loaded: bool = False
     laps_error: str = ""
+    restoring_selection: bool = False
+    _requested_drivers: str = ""
+    _requested_laps: str = ""
     telemetry_rows: list[dict[str, float | int]] = []
     _telemetry_laps: list[TelemetryLap] = []
     telemetry_track_segment_rows: list[TelemetryTrackSegment] = []
@@ -516,10 +583,25 @@ class EventState(rx.State):
         self.telemetry_loading = False
         self.telemetry_error = ""
 
+    def _sync_selection_url(self) -> EventSpec:
+        """Reflect the current selection in the address bar without navigation."""
+        return rx.call_script(
+            _selection_url_script(
+                f"/results/{self.event_season}/{self.round_number}",
+                self.selected_session,
+                self.active_tab,
+                self.selected_drivers,
+                self.selected_laps,
+                self._requested_drivers if self.restoring_selection else None,
+                self._requested_laps if self.restoring_selection else None,
+            )
+        )
+
     @rx.event
     async def change_tab(self, tab: str) -> AsyncGenerator[EventSpec | None]:
         """Load lap or telemetry data when its tab becomes active."""
         self.active_tab = tab
+        yield self._sync_selection_url()
         if tab == "telemetry":
             self.telemetry_animation_iteration += 1
         if (
@@ -641,7 +723,7 @@ class EventState(rx.State):
         return self._start_telemetry()
 
     @rx.event
-    def toggle_driver(self, code: str) -> None:
+    def toggle_driver(self, code: str) -> EventSpec | None:
         """Toggle a lap-chart driver and clear that driver's selected laps."""
         if not any(driver["code"] == code for driver in self.lap_drivers):
             return
@@ -657,9 +739,10 @@ class EventState(rx.State):
                 self._clear_telemetry()
         else:
             self.selected_drivers = [*self.selected_drivers, code]
+        return self._sync_selection_url()
 
     @rx.event
-    def toggle_lap(self, code: str, number: int) -> EventSpec | None:
+    def toggle_lap(self, code: str, number: int) -> EventSpec | list[EventSpec] | None:
         """Toggle a timed lap in the current session's telemetry pool."""
         if not any(
             lap["driver"] == code and lap["number"] == number for lap in self.lap_points
@@ -676,7 +759,7 @@ class EventState(rx.State):
                 if lap["driver"] != code or lap["number"] != number
             ]
             self._clear_telemetry()
-            return None
+            return self._sync_selection_url()
 
         if len(self.selected_laps) >= MAX_SELECTED_TELEMETRY_LAPS:
             return rx.toast(
@@ -688,23 +771,26 @@ class EventState(rx.State):
 
         self.selected_laps = [*self.selected_laps, {"driver": code, "number": number}]
         self._clear_telemetry()
-        return rx.toast(
-            f"Lap {number} ({code}) added",
-            close_button=True,
-            dismissible=True,
-            duration=4500,
-            action={
-                "label": "View Telemetry",
-                "on_click": EventState.change_tab("telemetry"),
-            },
-            style={
-                "background": "var(--gray-2)",
-                "color": "var(--gray-12)",
-                "border": "1px solid var(--gray-6)",
-                "border_radius": "0.75rem",
-                "box_shadow": "0 8px 24px rgba(0, 0, 0, 0.16)",
-            },
-        )
+        return [
+            self._sync_selection_url(),
+            rx.toast(
+                f"Lap {number} ({code}) added",
+                close_button=True,
+                dismissible=True,
+                duration=4500,
+                action={
+                    "label": "View Telemetry",
+                    "on_click": EventState.change_tab("telemetry"),
+                },
+                style={
+                    "background": "var(--gray-2)",
+                    "color": "var(--gray-12)",
+                    "border": "1px solid var(--gray-6)",
+                    "border_radius": "0.75rem",
+                    "box_shadow": "0 8px 24px rgba(0, 0, 0, 0.16)",
+                },
+            ),
+        ]
 
     @rx.event
     def set_show_outliers(self, value: bool) -> None:
@@ -712,12 +798,17 @@ class EventState(rx.State):
         self.show_outliers = value
 
     @rx.event
-    async def load_event(self) -> AsyncGenerator[None]:
+    async def load_event(self) -> AsyncGenerator[EventSpec | None]:
         """Load route event metadata, then its default Race classification."""
         self._event_request_generation += 1
         request_generation: int = self._event_request_generation
         route_season: str = self.season
         route_round: str = self.round
+        query = self.router.url.query_parameters
+        requested_session: str = query.get("session", "R")
+        requested_tab: str = query.get("tab", "session")
+        self._requested_drivers = query.get("drivers", "")
+        self._requested_laps = query.get("laps", "")
         self.event_season = route_season
         self.round_number = route_round
         self.event = {}
@@ -726,15 +817,21 @@ class EventState(rx.State):
         self.classification = []
         self.error = ""
         self.loading = True
-        self.active_tab = "session"
+        self.active_tab = (
+            requested_tab
+            if requested_tab in {"session", "laps", "telemetry"}
+            else "session"
+        )
         self.lap_drivers = []
         self.lap_points = []
         self.selected_drivers = []
         self.selected_laps = []
         self.show_outliers = False
-        self.laps_loading = False
         self.laps_loaded = False
         self.laps_error = ""
+        self.restoring_selection = bool(self._requested_drivers or self._requested_laps)
+        initial_load_laps = self.active_tab == "laps" or self.restoring_selection
+        self.laps_loading = initial_load_laps
         self.telemetry_animation_iteration = 0
         self._clear_telemetry()
         yield
@@ -773,7 +870,6 @@ class EventState(rx.State):
             "date_range": details["date_range"],
         }
         self.sessions = details["sessions"]
-        requested_session: str = self.router.url.query_parameters.get("session", "R")
         if any(session["code"] == requested_session for session in self.sessions):
             self.selected_session = requested_session
         yield
@@ -786,6 +882,8 @@ class EventState(rx.State):
         await self._load_classification(session_code, request_generation)
         if request_generation == self._event_request_generation:
             self.loading = False
+            if initial_load_laps:
+                yield EventState.load_laps(session_code, request_generation)
 
     @rx.event
     async def select_session(
@@ -808,8 +906,7 @@ class EventState(rx.State):
         request_generation: int = self._event_request_generation
         route_season: str = self.event_season
         route_round: str = self.round_number
-        if session_code != self.selected_session:
-            self.selected_laps = []
+        self.selected_laps = []
         self.selected_session = session_code
         self.classification = []
         self.error = ""
@@ -817,11 +914,15 @@ class EventState(rx.State):
         self.lap_drivers = []
         self.lap_points = []
         self.selected_drivers = []
-        self.laps_loading = self.active_tab == "laps"
+        initial_load_laps = self.active_tab == "laps"
+        self.laps_loading = initial_load_laps
         self.laps_loaded = False
         self.laps_error = ""
+        self.restoring_selection = False
+        self._requested_drivers = ""
+        self._requested_laps = ""
         self._clear_telemetry()
-        yield
+        yield self._sync_selection_url()
 
         await self._load_classification(session_code, request_generation)
         if not self._event_request_is_current(
@@ -829,11 +930,13 @@ class EventState(rx.State):
         ):
             return
         self.loading = False
-        if self.active_tab == "laps":
+        if initial_load_laps:
             yield EventState.load_laps(session_code, request_generation)
 
     @rx.event(background=True)
-    async def load_laps(self, session_code: str, request_generation: int) -> None:
+    async def load_laps(
+        self, session_code: str, request_generation: int
+    ) -> AsyncGenerator[EventSpec]:
         """Fetch the selected session's timed laps without blocking the UI."""
         async with self:
             route_season: str = self.event_season
@@ -874,6 +977,7 @@ class EventState(rx.State):
                 self.laps_loading = False
             return
 
+        events: list[EventSpec] = []
         async with self:
             if not self._event_request_is_current(
                 request_generation, route_season, route_round, session_code
@@ -883,6 +987,32 @@ class EventState(rx.State):
             self.lap_points = data["laps"]
             self.laps_loaded = bool(data["laps"])
             self.laps_loading = False
+            if self.restoring_selection:
+                self.selected_drivers, self.selected_laps = _restore_selection(
+                    self._requested_drivers,
+                    self._requested_laps,
+                    self.lap_drivers,
+                    self.lap_points,
+                )
+                self.restoring_selection = False
+                self._requested_drivers = ""
+                self._requested_laps = ""
+                events.append(self._sync_selection_url())
+                if self.active_tab == "telemetry" and self.selected_laps:
+                    events.append(self._start_telemetry())
+        for event in events:
+            yield event
+
+    @rx.event
+    def retry_laps(self) -> EventSpec | None:
+        """Retry loading lap data needed to restore a shared selection."""
+        if self.laps_loading:
+            return None
+        self.laps_loading = True
+        self.laps_error = ""
+        return EventState.load_laps(
+            self.selected_session, self._event_request_generation
+        )
 
     async def _load_classification(
         self, session_code: str, request_generation: int
@@ -1006,48 +1136,85 @@ def event_results() -> rx.Component:
                                     width="100%",
                                 ),
                                 rx.tabs.content(
-                                    laps_section(
-                                        EventState.selected_session_label,
-                                        EventState.driver_chips,
-                                        EventState.toggle_driver,
-                                        EventState.lap_chart_data,
-                                        EventState.lap_chart_y_axis,
-                                        EventState.driver_lines,
-                                        EventState.tyre_point_lines,
-                                        EventState.lap_strip_lap_numbers,
-                                        EventState.lap_strip_rows,
-                                        EventState.selected_drivers.length(),
-                                        EventState.toggle_lap,
-                                        EventState.show_outliers,
-                                        EventState.set_show_outliers,
-                                        EventState.laps_loading,
-                                        EventState.laps_loaded,
-                                        EventState.laps_error,
+                                    rx.cond(
+                                        EventState.restoring_selection
+                                        & (EventState.laps_error != ""),
+                                        rx.vstack(
+                                            status_card(
+                                                "Lap times unavailable",
+                                                EventState.laps_error,
+                                            ),
+                                            rx.button(
+                                                "Try again",
+                                                on_click=EventState.retry_laps,
+                                                variant="soft",
+                                            ),
+                                            width="100%",
+                                            align="start",
+                                        ),
+                                        laps_section(
+                                            EventState.selected_session_label,
+                                            EventState.driver_chips,
+                                            EventState.toggle_driver,
+                                            EventState.lap_chart_data,
+                                            EventState.lap_chart_y_axis,
+                                            EventState.driver_lines,
+                                            EventState.tyre_point_lines,
+                                            EventState.lap_strip_lap_numbers,
+                                            EventState.lap_strip_rows,
+                                            EventState.selected_drivers.length(),
+                                            EventState.toggle_lap,
+                                            EventState.show_outliers,
+                                            EventState.set_show_outliers,
+                                            EventState.laps_loading,
+                                            EventState.laps_loaded,
+                                            EventState.laps_error,
+                                        ),
                                     ),
                                     value="laps",
                                     width="100%",
                                 ),
                                 rx.tabs.content(
-                                    telemetry_section(
-                                        EventState.telemetry_rows,
-                                        EventState.telemetry_lines,
-                                        EventState.telemetry_axes,
-                                        EventState.telemetry_track_points,
-                                        EventState.telemetry_track_segments,
-                                        EventState.telemetry_track_corners,
-                                        EventState.telemetry_playback_laps,
-                                        EventState.telemetry_loaded_for,
-                                        EventState.telemetry_distance_metres,
-                                        EventState.telemetry_preserve_orientation,
-                                        EventState.telemetry_animation_key,
-                                        EventState.telemetry_corners,
-                                        EventState.telemetry_sectors,
-                                        EventState.telemetry_unavailable,
-                                        EventState.selected_laps.length(),
-                                        EventState.telemetry_loading,
-                                        EventState.telemetry_error,
-                                        EventState.change_tab("laps"),
-                                        EventState.retry_telemetry,
+                                    rx.cond(
+                                        EventState.restoring_selection,
+                                        rx.cond(
+                                            EventState.laps_error != "",
+                                            rx.vstack(
+                                                status_card(
+                                                    "Lap times unavailable",
+                                                    EventState.laps_error,
+                                                ),
+                                                rx.button(
+                                                    "Try again",
+                                                    on_click=EventState.retry_laps,
+                                                    variant="soft",
+                                                ),
+                                                width="100%",
+                                                align="start",
+                                            ),
+                                            loading_card("Loading selected laps…"),
+                                        ),
+                                        telemetry_section(
+                                            EventState.telemetry_rows,
+                                            EventState.telemetry_lines,
+                                            EventState.telemetry_axes,
+                                            EventState.telemetry_track_points,
+                                            EventState.telemetry_track_segments,
+                                            EventState.telemetry_track_corners,
+                                            EventState.telemetry_playback_laps,
+                                            EventState.telemetry_loaded_for,
+                                            EventState.telemetry_distance_metres,
+                                            EventState.telemetry_preserve_orientation,
+                                            EventState.telemetry_animation_key,
+                                            EventState.telemetry_corners,
+                                            EventState.telemetry_sectors,
+                                            EventState.telemetry_unavailable,
+                                            EventState.selected_laps.length(),
+                                            EventState.telemetry_loading,
+                                            EventState.telemetry_error,
+                                            EventState.change_tab("laps"),
+                                            EventState.retry_telemetry,
+                                        ),
                                     ),
                                     value="telemetry",
                                     width="100%",
