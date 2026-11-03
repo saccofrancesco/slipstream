@@ -805,7 +805,8 @@ class EventState(rx.State):
         route_season: str = self.season
         route_round: str = self.round
         query = self.router.url.query_parameters
-        requested_session: str = query.get("session", "R")
+        requested_session: str = query.get("session", "")
+        requested_session_is_valid = bool(requested_session)
         requested_tab: str = query.get("tab", "session")
         self._requested_drivers = query.get("drivers", "")
         self._requested_laps = query.get("laps", "")
@@ -870,9 +871,15 @@ class EventState(rx.State):
             "date_range": details["date_range"],
         }
         self.sessions = details["sessions"]
-        if any(session["code"] == requested_session for session in self.sessions):
+        requested_session_is_valid = requested_session_is_valid and any(
+            session["code"] == requested_session for session in self.sessions
+        )
+        if requested_session_is_valid:
             self.selected_session = requested_session
         yield
+
+        if not requested_session_is_valid:
+            yield self._sync_selection_url()
 
         session_code: str = self.selected_session
         if not self._event_request_is_current(
