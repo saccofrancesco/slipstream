@@ -37,6 +37,7 @@ TRACK_ROTATION_ADJUSTMENTS: dict[str, float] = {
     "Circuit Park Zandvoort": -179.0,
     "Autodromo Nazionale di Monza": 170.5,
     "Autódromo Hermanos Rodríguez": -44.0,
+    "Autódromo José Carlos Pace": -168.0,
     "Madring": 148.0,
     "Baku City Circuit": 56.0,
     "Sepang International Circuit": -159.5,
