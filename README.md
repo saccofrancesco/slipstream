@@ -9,6 +9,10 @@
   </a>
 </p>
 
+<p align="center">
+  <a href="https://origintech.live/products/slipstream" target="_blank" rel="noopener noreferrer"><img src="https://origintech.live/badge.svg" alt="Slipstream — featured on Origin Tech" width="200" height="44"></a>
+</p>
+
 <h4 align="center">A Formula 1 results dashboard for race weekends, championship standings, session classifications, lap times, and telemetry — built with <a href="https://reflex.dev">Reflex</a> and powered by <a href="https://openf1.org/">OpenF1</a> and <a href="https://github.com/jolpica/jolpica-f1">Jolpica F1</a>.</h4>
 
 <p align="center"><a href="https://slipstream-lime-star.reflex.run"><strong>🌐 Try Slipstream live</strong></a></p>
