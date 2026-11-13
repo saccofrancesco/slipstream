@@ -339,6 +339,104 @@ export function Trackmap({
   );
 }
 
+function endpointSlope(firstWidth, secondWidth, firstSecant, secondSecant) {
+  const slope =
+    ((2 * firstWidth + secondWidth) * firstSecant - firstWidth * secondSecant) /
+    (firstWidth + secondWidth);
+  if (Math.sign(slope) !== Math.sign(firstSecant)) return 0;
+  if (
+    Math.sign(firstSecant) !== Math.sign(secondSecant) &&
+    Math.abs(slope) > 3 * Math.abs(firstSecant)
+  ) {
+    return 3 * firstSecant;
+  }
+  return slope;
+}
+
+function monotoneDistanceSlopes(times, distances) {
+  if (times.length < 3 || times.length !== distances.length) return null;
+
+  const widths = [];
+  const secants = [];
+  for (let index = 0; index < times.length - 1; index += 1) {
+    const width = times[index + 1] - times[index];
+    const distance = distances[index + 1] - distances[index];
+    if (
+      !Number.isFinite(width) ||
+      !Number.isFinite(distance) ||
+      width <= 0 ||
+      distance < 0
+    ) {
+      return null;
+    }
+    widths.push(width);
+    secants.push(distance / width);
+  }
+
+  const slopes = Array(times.length).fill(0);
+  slopes[0] = endpointSlope(widths[0], widths[1], secants[0], secants[1]);
+  const lastInterval = widths.length - 1;
+  slopes[slopes.length - 1] = endpointSlope(
+    widths[lastInterval],
+    widths[lastInterval - 1],
+    secants[lastInterval],
+    secants[lastInterval - 1],
+  );
+
+  for (let index = 1; index < times.length - 1; index += 1) {
+    const previousSecant = secants[index - 1];
+    const nextSecant = secants[index];
+    if (
+      previousSecant === 0 ||
+      nextSecant === 0 ||
+      Math.sign(previousSecant) !== Math.sign(nextSecant)
+    ) {
+      slopes[index] = 0;
+      continue;
+    }
+
+    const previousWidth = widths[index - 1];
+    const nextWidth = widths[index];
+    const firstWeight = 2 * nextWidth + previousWidth;
+    const secondWeight = nextWidth + 2 * previousWidth;
+    slopes[index] =
+      (firstWeight + secondWeight) /
+      (firstWeight / previousSecant + secondWeight / nextSecant);
+  }
+
+  return slopes;
+}
+
+function buildMotionProfile(lap, points) {
+  const startIndex = Math.max(0, Math.floor(finiteNumber(lap.start_index)));
+  const times = lap.elapsed.map((value) => finiteNumber(value, NaN));
+  const distances = times.map((_, index) =>
+    finiteNumber(points[startIndex + index]?.distance, NaN),
+  );
+  return {
+    distances,
+    slopes: monotoneDistanceSlopes(times, distances),
+  };
+}
+
+function cubicDistanceAtTime(profile, firstIndex, fraction, duration) {
+  const firstDistance = profile.distances[firstIndex];
+  const secondDistance = profile.distances[firstIndex + 1];
+  const distanceSpan = secondDistance - firstDistance;
+  if (distanceSpan <= 0) return firstDistance;
+
+  const firstSlope = profile.slopes[firstIndex];
+  const secondSlope = profile.slopes[firstIndex + 1];
+  const fractionSquared = fraction * fraction;
+  const fractionCubed = fractionSquared * fraction;
+  const distance =
+    (2 * fractionCubed - 3 * fractionSquared + 1) * firstDistance +
+    (fractionCubed - 2 * fractionSquared + fraction) * duration * firstSlope +
+    (-2 * fractionCubed + 3 * fractionSquared) * secondDistance +
+    (fractionCubed - fractionSquared) * duration * secondSlope;
+  return Math.min(secondDistance, Math.max(firstDistance, distance));
+}
+
 function lapPositionAtTime(lap, points, currentTime) {
   const elapsed = lap.elapsed;
   const startIndex = Math.max(0, Math.floor(finiteNumber(lap.start_index)));
@@ -357,7 +455,7 @@ function lapPositionAtTime(lap, points, currentTime) {
   const upperIndex = Math.max(1, low);
   const lowerIndex = upperIndex - 1;
   const span = elapsed[upperIndex] - elapsed[lowerIndex];
-  const fraction =
+  const timeFraction =
     span > 0
       ? Math.min(
           1,
@@ -366,12 +464,22 @@ function lapPositionAtTime(lap, points, currentTime) {
       : 0;
   const first = points[startIndex + lowerIndex];
   const second = points[startIndex + upperIndex];
+  const profile = lap.motionProfile;
+  let fraction = timeFraction;
+  let distance =
+    finiteNumber(first.distance) +
+    (finiteNumber(second.distance) - finiteNumber(first.distance)) * fraction;
+  if (profile?.slopes) {
+    distance = cubicDistanceAtTime(profile, lowerIndex, timeFraction, span);
+    const distanceSpan = profile.distances[upperIndex] - profile.distances[lowerIndex];
+    if (distanceSpan > 0) {
+      fraction = (distance - profile.distances[lowerIndex]) / distanceSpan;
+    }
+  }
   return {
     x: first.x + (second.x - first.x) * fraction,
     y: first.y + (second.y - first.y) * fraction,
-    distance:
-      finiteNumber(first.distance) +
-      (finiteNumber(second.distance) - finiteNumber(first.distance)) * fraction,
+    distance,
   };
 }
 
@@ -466,6 +574,14 @@ export function TelemetryTrackSync({
       }),
     [playbackLaps, points.length],
   );
+  const playbackMotionLaps = React.useMemo(
+    () =>
+      usablePlaybackLaps.map((lap) => ({
+        ...lap,
+        motionProfile: buildMotionProfile(lap, points),
+      })),
+    [usablePlaybackLaps, points],
+  );
   const totalDuration = React.useMemo(
     () =>
       usablePlaybackLaps.reduce(
@@ -479,7 +595,7 @@ export function TelemetryTrackSync({
     ? Math.min(1, Math.max(0, currentTime / totalDuration))
     : 0;
   const playbackReferenceLap = playbackEnabled
-    ? usablePlaybackLaps.reduce((slowestLap, lap) =>
+    ? playbackMotionLaps.reduce((slowestLap, lap) =>
         Number(lap.duration) > Number(slowestLap.duration) ? lap : slowestLap,
       )
     : null;
@@ -606,7 +722,7 @@ export function TelemetryTrackSync({
           animationKey={animationKey}
           durationMs={durationMs}
           activePointIndex={activePointIndex}
-          playbackLaps={usablePlaybackLaps}
+          playbackLaps={playbackMotionLaps}
         />
         {playbackEnabled ? (
           <div
