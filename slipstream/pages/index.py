@@ -1,26 +1,19 @@
-"""Landing page for the Slipstream application."""
+"""Redirect the root route to the driver championship."""
 
 import reflex as rx
+from reflex.event import EventSpec
 
-from slipstream.components import container, home_destinations, home_hero, navbar
+
+class RootRedirectState(rx.State):
+    """Handle visits to the root route."""
+
+    @rx.event
+    def redirect_to_drivers(self) -> EventSpec:
+        """Send visitors from the root route to the driver standings."""
+        return rx.redirect("/drivers")
 
 
-@rx.page("/", "Slipstream — Formula 1 race intelligence")
-def index() -> rx.Component:
-    """Render the Slipstream landing page and its primary section links."""
-    return rx.vstack(
-        navbar(),
-        container(
-            rx.vstack(
-                home_hero(),
-                home_destinations(),
-                align="stretch",
-                spacing="8",
-                width="100%",
-            ),
-        ),
-        width="100%",
-        align="center",
-        min_height="100vh",
-        spacing="0",
-    )
+@rx.page(route="/", on_load=RootRedirectState.redirect_to_drivers)
+def root_redirect() -> rx.Component:
+    """Render no landing-page content while the redirect runs."""
+    return rx.fragment()
