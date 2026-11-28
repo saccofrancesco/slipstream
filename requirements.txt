@@ -43,7 +43,7 @@ python-engineio==4.15.1
 python-multipart==0.0.34
 python-socketio==5.18.1
 pytz==2026.6
-redis==7.4.1
+redis==8.2.0
 reflex==0.11.0
 reflex-base==0.11.0
 reflex-build-sdk==0.1.2
